@@ -1,0 +1,384 @@
+Build me an app with screens that look like this. You can hotlink images from the html
+
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Water Level &amp; Rainfall Monitor</title>
+<!-- Tailwind CSS CDN with forms plugin -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Chart.js CDN for interactive dual-axis chart -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- BEGIN: Custom Styles -->
+<style data-purpose="custom-layout">
+    body {
+      background-color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    /* Smooth shadow elevation matching clean dashboard style */
+    .dashboard-card {
+      box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+    }
+  </style>
+<!-- END: Custom Styles -->
+</head>
+<body class="min-h-screen text-slate-800 p-4 md:p-8 flex flex-col justify-start items-center">
+<main class="w-full max-w-[1240px] space-y-5" data-purpose="dashboard-container">
+<!-- BEGIN: TopHeaderCard -->
+<header class="bg-white rounded-xl p-5 border border-slate-200/80 dashboard-card flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+<!-- Title & Branding -->
+<div class="flex items-center gap-3.5">
+<div class="w-11 h-11 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm shadow-blue-500/20 shrink-0">
+<!-- Water drop icon -->
+<svg class="w-6 h-6 fill-current" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+</svg>
+</div>
+<div>
+<h1 class="text-xl font-bold tracking-tight text-slate-900 leading-tight">Water Level &amp; Rainfall Monitor</h1>
+<p class="text-xs md:text-sm text-slate-500 font-medium">Real-time monitoring system with rainfall data</p>
+</div>
+</div>
+<!-- Header Action Buttons -->
+<div class="flex items-center gap-2.5 w-full md:w-auto">
+<button class="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors cursor-pointer" type="button">
+<!-- Download icon -->
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span>Download CSV</span>
+</button>
+<button class="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors cursor-pointer" type="button">
+<!-- Refresh icon -->
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="public/assets/aistudio/FloodPrediction_79803788.csv" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span>Refresh</span>
+</button>
+</div>
+</header>
+<!-- END: TopHeaderCard -->
+<!-- BEGIN: MetricCardsSection -->
+<section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5" data-purpose="metrics-summary">
+<!-- Metric 1: Current Level -->
+<div class="bg-blue-50/70 border border-blue-200/70 rounded-xl p-4 flex items-center justify-between">
+<div>
+<span class="text-xs font-semibold text-blue-700">Current Level</span>
+<div class="text-2xl font-bold text-slate-900 mt-1">1.650m</div>
+</div>
+<div class="text-blue-600">
+<!-- Wave / Sparkline line icon -->
+<svg class="w-8 h-8 stroke-current" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" viewbox="0 0 24 24">
+<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+</svg>
+</div>
+</div>
+<!-- Metric 2: Average Level -->
+<div class="bg-emerald-50/70 border border-emerald-200/70 rounded-xl p-4 flex items-center justify-between">
+<div>
+<span class="text-xs font-semibold text-emerald-700">Average Level</span>
+<div class="text-2xl font-bold text-slate-900 mt-1">0.953m</div>
+</div>
+<div class="text-emerald-600">
+<!-- Trending Up icon -->
+<svg class="w-8 h-8 stroke-current" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" viewbox="0 0 24 24">
+<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+<polyline points="17 6 23 6 23 12"></polyline>
+</svg>
+</div>
+</div>
+<!-- Metric 3: Total Rainfall -->
+<div class="bg-teal-50/70 border border-teal-200/70 rounded-xl p-4 flex items-center justify-between">
+<div>
+<span class="text-xs font-semibold text-teal-700">Total Rainfall</span>
+<div class="text-2xl font-bold text-slate-900 mt-1">300.6mm</div>
+</div>
+<div class="text-teal-600">
+<!-- Umbrella / Cloud Rain icon -->
+<svg class="w-8 h-8 stroke-current" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24">
+<path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path>
+<path d="M16 14v6"></path>
+<path d="M8 14v6"></path>
+<path d="M12 16v6"></path>
+</svg>
+</div>
+</div>
+<!-- Metric 4: Max Rainfall (30min) -->
+<div class="bg-teal-50/70 border border-teal-200/70 rounded-xl p-4 flex items-center justify-between">
+<div>
+<span class="text-xs font-semibold text-teal-700">Max Rainfall (30min)</span>
+<div class="text-2xl font-bold text-slate-900 mt-1">54.8mm</div>
+</div>
+<div class="text-teal-600">
+<!-- Umbrella / Cloud Rain icon -->
+<svg class="w-8 h-8 stroke-current" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24">
+<path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path>
+<path d="M16 14v6"></path>
+<path d="M8 14v6"></path>
+<path d="M12 16v6"></path>
+</svg>
+</div>
+</div>
+<!-- Metric 5: Current Status -->
+<div id="statusCard" class="bg-emerald-50/70 border border-emerald-200/70 rounded-xl p-4 flex items-center justify-between">
+  <div>
+    <span id="statusLabel" class="text-xs font-semibold text-emerald-700">Current Status</span>
+    <div id="currentStatus" class="text-2xl font-extrabold text-emerald-600 mt-1 tracking-tight">NORMAL</div>
+  </div>
+  <div id="statusIcon" class="text-emerald-600 text-2xl font-bold">✓</div>
+</div>
+</section>
+<!-- END: MetricCardsSection -->
+<!-- BEGIN: MainChartContainer -->
+<section class="bg-white rounded-xl border border-slate-200/80 dashboard-card p-6" data-purpose="chart-container">
+<!-- Chart Controls & Status Bar -->
+<div class="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-4 gap-3 border-b border-slate-100">
+<!-- Live Connection status indicator -->
+<div class="flex items-center gap-2 text-xs md:text-sm text-slate-600 font-medium">
+<svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24">
+<path d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span>Connected. Last updated: <span class="font-normal text-slate-500">10:13:08 AM</span></span>
+</div>
+<!-- Time Range Selector -->
+<div class="relative">
+<select aria-label="Time Range" class="text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg px-3 py-1.5 pr-8 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 shadow-xs cursor-pointer">
+<option>1 Day</option>
+<option>7 Days</option>
+<option>30 Days</option>
+</select>
+</div>
+</div>
+<!-- Chart Legend Items -->
+<div class="flex flex-wrap items-center justify-center gap-6 pt-5 pb-3 text-xs font-semibold text-slate-600">
+<!-- Water Level -->
+<div class="flex items-center gap-2">
+<span class="w-3.5 h-3.5 rounded-full bg-blue-600 inline-block"></span>
+<span>Water Level</span>
+</div>
+<!-- Alert Level -->
+<div class="flex items-center gap-2">
+<span class="w-3.5 h-3.5 rounded-full border-2 border-amber-500 bg-white inline-block"></span>
+<span>Alert Level (2.2m)</span>
+</div>
+<!-- Alarm Level -->
+<div class="flex items-center gap-2">
+<span class="w-3.5 h-3.5 rounded-full border-2 border-red-500 bg-white inline-block"></span>
+<span>Alarm Level (2.5m)</span>
+</div>
+<!-- Rainfall -->
+<div class="flex items-center gap-2">
+<span class="w-3.5 h-3.5 rounded-full bg-teal-400 inline-block"></span>
+<span>Rainfall</span>
+</div>
+</div>
+<!-- Chart Canvas Wrapper -->
+<div class="relative w-full h-[450px] mt-2">
+<canvas id="waterMonitorChart"></canvas>
+</div>
+</section>
+<!-- END: MainChartContainer -->
+</main>
+<!-- BEGIN: ChartInitializationScript -->
+<script data-purpose="chart-setup">
+    document.addEventListener('DOMContentLoaded', () => {
+      const ctx = document.getElementById('waterMonitorChart').getContext('2d');
+
+      function updateWaterStatus(currentLevel) {
+        const statusCard = document.getElementById("statusCard");
+        const statusLabel = document.getElementById("statusLabel");
+        const currentStatus = document.getElementById("currentStatus");
+        const statusIcon = document.getElementById("statusIcon");
+
+        if (currentLevel >= 2.2) {
+          currentStatus.innerText = "ALERT";
+          statusCard.className = "bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between";
+          if (statusLabel) statusLabel.className = "text-xs font-semibold text-red-700";
+          currentStatus.className = "text-2xl font-extrabold text-red-600 mt-1 tracking-tight";
+          statusIcon.className = "text-red-600 text-2xl font-bold";
+          statusIcon.innerHTML = "⚠";
+          alert("WARNING! Water level is " + currentLevel + "m. Flood Alert!");
+        } else {
+          currentStatus.innerText = "NORMAL";
+          statusCard.className = "bg-emerald-50/70 border border-emerald-200/70 rounded-xl p-4 flex items-center justify-between";
+          if (statusLabel) statusLabel.className = "text-xs font-semibold text-emerald-700";
+          currentStatus.className = "text-2xl font-extrabold text-emerald-600 mt-1 tracking-tight";
+          statusIcon.className = "text-emerald-600 text-2xl font-bold";
+          statusIcon.innerHTML = "✓";
+        }
+      }
+
+      const currentWaterLevel = 1.650;
+      updateWaterStatus(currentWaterLevel);
+
+      // Create soft blue gradient fill for water level surge
+      const gradient = ctx.createLinearGradient(0, 0, 0, 420);
+      gradient.addColorStop(0, 'rgba(59, 130, 246, 0.45)');
+      gradient.addColorStop(1, 'rgba(59, 130, 246, 0.04)');
+
+      const labels = ['10:16', '10:33', '10:50', '11:07', '11:25', '11:42', '11:59', '09:23'];
+
+      // Custom threshold line plugin
+      const thresholdLinesPlugin = {
+        id: 'thresholdLines',
+        beforeDraw(chart) {
+          const { ctx, chartArea: { left, right }, scales: { yWater } } = chart;
+          if (!yWater) return;
+
+          ctx.save();
+          ctx.setLineDash([4, 4]);
+          ctx.lineWidth = 1.5;
+
+          // Alert level dashed line (2.2m)
+          const alertY = yWater.getPixelForValue(2.2);
+          ctx.strokeStyle = '#f59e0b';
+          ctx.beginPath();
+          ctx.moveTo(left, alertY);
+          ctx.lineTo(right, alertY);
+          ctx.stroke();
+
+          // Alarm level dashed line (2.5m)
+          const alarmY = yWater.getPixelForValue(2.5);
+          ctx.strokeStyle = '#ef4444';
+          ctx.beginPath();
+          ctx.moveTo(left, alarmY);
+          ctx.lineTo(right, alarmY);
+          ctx.stroke();
+
+          ctx.restore();
+        }
+      };
+
+      new Chart(ctx, {
+        type: 'line',
+        plugins: [thresholdLinesPlugin],
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              type: 'bar',
+              label: 'Rainfall',
+              data: [0, 0, 14, 14, 0, 0, 18, 0],
+              yAxisID: 'yRain',
+              backgroundColor: '#38bdf8',
+              barThickness: 6,
+              borderRadius: 2,
+              order: 2
+            },
+            {
+              type: 'line',
+              label: 'Water Level',
+              data: [0.83, 0.83, 0.81, 0.87, 0.91, 0.85, 0.87, 0.87, 0.83, 1.55, 1.69, 1.65],
+              // Map points across timeline
+              data: [
+                { x: '10:16', y: 0.83 },
+                { x: '10:33', y: 0.82 },
+                { x: '10:50', y: 0.87 },
+                { x: '11:07', y: 0.91 },
+                { x: '11:25', y: 0.85 },
+                { x: '11:42', y: 0.87 },
+                { x: '11:59', y: 0.83 },
+                { x: '09:23', y: 1.65 }
+              ],
+              yAxisID: 'yWater',
+              borderColor: '#1d4ed8',
+              borderWidth: 2.5,
+              backgroundColor: gradient,
+              fill: true,
+              tension: 0.35,
+              pointBackgroundColor: '#1d4ed8',
+              pointBorderColor: '#ffffff',
+              pointBorderWidth: 1.5,
+              pointRadius: 4,
+              pointHoverRadius: 6,
+              order: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: 'index',
+            intersect: false,
+          },
+          plugins: {
+            legend: {
+              display: false // Handled in custom HTML legend above
+            },
+            tooltip: {
+              backgroundColor: 'rgba(15, 23, 42, 0.9)',
+              titleFont: { size: 12 },
+              bodyFont: { size: 12 },
+              padding: 10,
+              cornerRadius: 6
+            }
+          },
+          scales: {
+            x: {
+              grid: {
+                color: '#f1f5f9',
+                borderColor: '#e2e8f0'
+              },
+              ticks: {
+                color: '#64748b',
+                font: { size: 11 }
+              },
+              title: {
+                display: true,
+                text: 'Time',
+                color: '#0f172a',
+                font: { weight: 'bold', size: 12 },
+                padding: { top: 8 }
+              }
+            },
+            yWater: {
+              type: 'linear',
+              position: 'left',
+              min: 0.0,
+              max: 1.8,
+              ticks: {
+                stepSize: 0.2,
+                callback: (val) => val.toFixed(1) + 'm',
+                color: '#0284c7',
+                font: { size: 11 }
+              },
+              title: {
+                display: true,
+                text: 'Water Level (m)',
+                color: '#0284c7',
+                font: { weight: 'bold', size: 12 }
+              },
+              grid: {
+                color: '#f1f5f9'
+              }
+            },
+            yRain: {
+              type: 'linear',
+              position: 'right',
+              min: 0,
+              max: 60,
+              ticks: {
+                stepSize: 10,
+                callback: (val) => val + 'mm',
+                color: '#0d9488',
+                font: { size: 11 }
+              },
+              title: {
+                display: true,
+                text: 'Rainfall (mm)',
+                color: '#0d9488',
+                font: { weight: 'bold', size: 12 }
+              },
+              grid: {
+                drawOnChartArea: false
+              }
+            }
+          }
+        }
+      });
+    });
+  </script>
+<!-- END: ChartInitializationScript -->
+</body></html>

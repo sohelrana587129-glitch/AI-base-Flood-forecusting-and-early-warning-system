@@ -1,0 +1,291 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable Hardened Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isVerified() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'sohelrana587129@gmail.com'
+      );
+    }
+
+    // Validation Blueprints
+    function isValidUserPublic(data) {
+      return data.keys().hasAll(['ownerId', 'firstName', 'lastName', 'displayRole', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'firstName', 'lastName', 'displayRole', 'status', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.firstName is string && data.firstName.size() >= 1 && data.firstName.size() <= 80 &&
+        data.lastName is string && data.lastName.size() >= 1 && data.lastName.size() <= 80 &&
+        data.displayRole is string && data.displayRole.size() <= 40 &&
+        data.displayRole in ['Citizen', 'Forecast Officer', 'Authority', 'Volunteer', 'Admin'] &&
+        data.status is string && data.status.size() <= 20 &&
+        data.status in ['Active', 'Suspended'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivate(data) {
+      return data.keys().hasAll(['ownerId', 'email', 'phone', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'email', 'phone', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+        data.phone is string && data.phone.size() >= 3 && data.phone.size() <= 40 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSensorReading(data) {
+      return data.keys().hasAll(['ownerId', 'stationId', 'stationName', 'timeLabel', 'waterLevel', 'rainfall', 'soilMoisture', 'status', 'createdAt']) &&
+        data.keys().hasOnly(['ownerId', 'stationId', 'stationName', 'timeLabel', 'waterLevel', 'rainfall', 'soilMoisture', 'status', 'createdAt']) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.stationId is string && data.stationId.size() >= 1 && data.stationId.size() <= 64 && data.stationId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.stationName is string && data.stationName.size() >= 1 && data.stationName.size() <= 120 &&
+        data.timeLabel is string && data.timeLabel.size() >= 1 && data.timeLabel.size() <= 32 &&
+        data.waterLevel is number && data.waterLevel >= 0 && data.waterLevel <= 50 &&
+        data.rainfall is number && data.rainfall >= 0 && data.rainfall <= 2000 &&
+        data.soilMoisture is number && data.soilMoisture >= 0 && data.soilMoisture <= 100 &&
+        data.status is string && data.status.size() <= 20 &&
+        data.status in ['NORMAL', 'WARNING', 'ALERT'] &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidForecast(data) {
+      return data.keys().hasAll(['ownerId', 'location', 'waterLevel', 'rainfall', 'floodRisk', 'status', 'aiSummary', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'location', 'waterLevel', 'rainfall', 'floodRisk', 'status', 'aiSummary', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.location is string && data.location.size() >= 1 && data.location.size() <= 100 &&
+        data.waterLevel is number && data.waterLevel >= 0 && data.waterLevel <= 50 &&
+        data.rainfall is number && data.rainfall >= 0 && data.rainfall <= 2000 &&
+        data.floodRisk is string && data.floodRisk.size() <= 20 &&
+        data.floodRisk in ['Low', 'Medium', 'High'] &&
+        data.status is string && data.status.size() <= 20 &&
+        data.status in ['Pending', 'Reviewed', 'Approved', 'Rejected', 'Published'] &&
+        data.aiSummary is string && data.aiSummary.size() >= 1 && data.aiSummary.size() <= 500 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidWarning(data) {
+      return data.keys().hasAll(['ownerId', 'location', 'riskLevel', 'warningStatus', 'advisoryMessage', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'location', 'riskLevel', 'warningStatus', 'advisoryMessage', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.location is string && data.location.size() >= 1 && data.location.size() <= 100 &&
+        data.riskLevel is string && data.riskLevel.size() <= 20 &&
+        data.riskLevel in ['Low', 'Medium', 'High'] &&
+        data.warningStatus is string && data.warningStatus.size() <= 30 &&
+        data.warningStatus in ['Pending Review', 'Published', 'Cancelled'] &&
+        data.advisoryMessage is string && data.advisoryMessage.size() >= 1 && data.advisoryMessage.size() <= 400 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSosRequest(data) {
+      return data.keys().hasAll(['ownerId', 'requesterName', 'location', 'emergencyType', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'requesterName', 'location', 'emergencyType', 'status', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.requesterName is string && data.requesterName.size() >= 1 && data.requesterName.size() <= 100 &&
+        data.location is string && data.location.size() >= 1 && data.location.size() <= 100 &&
+        data.emergencyType is string && data.emergencyType.size() <= 40 &&
+        data.emergencyType in ['Flood Rescue', 'Emergency Help', 'Food Support', 'Medical Aid'] &&
+        data.status is string && data.status.size() <= 20 &&
+        data.status in ['Pending', 'In Progress', 'Completed'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidShelter(data) {
+      return data.keys().hasAll(['ownerId', 'name', 'district', 'area', 'capacity', 'occupancy', 'elevation', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'name', 'district', 'area', 'capacity', 'occupancy', 'elevation', 'status', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.district is string && data.district.size() <= 40 &&
+        data.district in ['sylhet', 'dinajpur', 'dhaka', 'sunamganj'] &&
+        data.area is string && data.area.size() >= 1 && data.area.size() <= 60 &&
+        data.capacity is number && data.capacity >= 1 && data.capacity <= 50000 &&
+        data.occupancy is number && data.occupancy >= 0 && data.occupancy <= 50000 &&
+        data.elevation is number && data.elevation >= 0 && data.elevation <= 5000 &&
+        data.status is string && data.status.size() <= 30 &&
+        data.status in ['Available', 'Near Capacity', 'Full'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // 1. Admins Collection (Read-only marker, never client-writable)
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && isOwner(adminId);
+      allow list, create, update, delete: if false;
+    }
+
+    // 2. Public Users Collection (Isolated from PII)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(userId) && isValidUserPublic(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        (incoming().displayRole != 'Admin' || isAdmin()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(userId) && isValidUserPublic(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid &&
+           existing().status != 'Suspended' &&
+           incoming().displayRole == existing().displayRole &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['firstName', 'lastName', 'status', 'updatedAt']))
+        );
+      allow delete: if isVerified() && isValidId(userId) && (existing().ownerId == request.auth.uid || isAdmin());
+
+      // 3. Isolated User Private PII Subcollection (Master Gate + Split Collection)
+      match /private/{docId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(docId) && (isOwner(userId) || isAdmin()) &&
+          get(/databases/$(database)/documents/users/$(userId)).data.ownerId == request.auth.uid;
+        allow list: if false;
+        allow create: if isVerified() && isValidId(userId) && isValidId(docId) && isValidUserPrivate(incoming()) &&
+          incoming().ownerId == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/users/$(userId)) &&
+          get(/databases/$(database)/documents/users/$(userId)).data.ownerId == request.auth.uid;
+        allow update: if isVerified() && isValidId(userId) && isValidId(docId) && isValidUserPrivate(incoming()) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time && (
+            isAdmin() ||
+            (isOwner(userId) &&
+             incoming().diff(existing()).affectedKeys().hasOnly(['email', 'phone', 'updatedAt']) &&
+             get(/databases/$(database)/documents/users/$(userId)).data.ownerId == request.auth.uid)
+          );
+        allow delete: if isVerified() && isValidId(userId) && isValidId(docId) && (isOwner(userId) || isAdmin());
+      }
+    }
+
+    // 4. Sensor Readings Collection (Immutable Telemetry Log)
+    match /sensor_readings/{readingId} {
+      allow get: if isSignedIn() && isValidId(readingId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(readingId) && isValidSensorReading(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isVerified() && isValidId(readingId) && (existing().ownerId == request.auth.uid || isAdmin());
+    }
+
+    // 5. Flood Forecasts Collection
+    match /forecasts/{forecastId} {
+      allow get: if isSignedIn() && isValidId(forecastId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(forecastId) && isValidForecast(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(forecastId) && isValidForecast(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid &&
+           existing().status != 'Rejected' && (
+             // Action: Validate or Publish Status
+             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) ||
+             // Action: Update AI Forecast Data
+             incoming().diff(existing()).affectedKeys().hasOnly(['waterLevel', 'rainfall', 'floodRisk', 'aiSummary', 'status', 'updatedAt'])
+           ))
+        );
+      allow delete: if isVerified() && isValidId(forecastId) && (existing().ownerId == request.auth.uid || isAdmin());
+    }
+
+    // 6. Disaster Warnings Collection
+    match /warnings/{warningId} {
+      allow get: if isSignedIn() && isValidId(warningId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(warningId) && isValidWarning(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(warningId) && isValidWarning(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid &&
+           existing().warningStatus != 'Cancelled' && (
+             // Action: Change Warning Status (Review / Publish / Cancel)
+             incoming().diff(existing()).affectedKeys().hasOnly(['warningStatus', 'updatedAt']) ||
+             // Action: Edit Warning Risk & Advisory
+             incoming().diff(existing()).affectedKeys().hasOnly(['riskLevel', 'warningStatus', 'advisoryMessage', 'updatedAt'])
+           ))
+        );
+      allow delete: if isVerified() && isValidId(warningId) && (existing().ownerId == request.auth.uid || isAdmin());
+    }
+
+    // 7. Volunteer SOS Requests Collection
+    match /sos_requests/{sosId} {
+      allow get: if isSignedIn() && isValidId(sosId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(sosId) && isValidSosRequest(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(sosId) && isValidSosRequest(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid &&
+           existing().status != 'Completed' &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+        );
+      allow delete: if isVerified() && isValidId(sosId) && (existing().ownerId == request.auth.uid || isAdmin());
+    }
+
+    // 8. Shelters Collection
+    match /shelters/{shelterId} {
+      allow get: if isSignedIn() && isValidId(shelterId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(shelterId) && isValidShelter(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(shelterId) && isValidShelter(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['occupancy', 'status', 'updatedAt']))
+        );
+      allow delete: if isVerified() && isValidId(shelterId) && (existing().ownerId == request.auth.uid || isAdmin());
+    }
+  }
+}

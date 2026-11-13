@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<!-- saved from url=(0035)http://127.0.0.1:5500/forecast.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Forecast Officer Dashboard</title>
+    <link rel="stylesheet" href="forecast.css">
+</head>
+<body>
+
+    <div class="sidebar">
+        <h2>FloodGuard</h2>
+        <p>Forecast Officer</p>
+
+        <ul>
+            <li>Dashboard</li>
+            <li>Environmental Data</li>
+            <li>AI Predictions</li>
+            <li>Validate Forecasts</li>
+            <li>Publish Forecasts</li>
+            <li>Logout</li>
+        </ul>
+    </div>
+
+    <div class="main">
+
+        <div class="header">
+            <h1>Forecast Officer Dashboard</h1>
+            <p>AI-Based Flood Forecasting and Early Warning System</p>
+        </div>
+
+        <h2>Dashboard Overview</h2>
+
+        <div class="cards">
+
+            <div class="card">
+                <h3>Environmental Data</h3>
+                <p>View weather and water-level information.</p>
+                <button>View Data</button>
+            </div>
+
+            <div class="card">
+                <h3>AI Predictions</h3>
+                <p>Monitor AI-based flood predictions.</p>
+                <button>View Predictions</button>
+            </div>
+
+            <div class="card">
+                <h3>Pending Forecasts</h3>
+                <p>Check forecasts waiting for validation.</p>
+                <button>Review Forecasts</button>
+            </div>
+
+        </div>
+
+        <h2>Flood Forecast Validation</h2>
+
+        <table>
+            <tbody><tr>
+                <th>Location</th>
+                <th>Water Level</th>
+                <th>Flood Risk</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+
+            <tr>
+                <td>Dhaka</td>
+                <td>7.5 m</td>
+                <td class="high">High</td>
+                <td>Pending</td>
+                <td>
+                    <button>Approve</button>
+                    <button class="reject">Reject</button>
+                </td>
+            </tr>
+
+            <tr>
+                <td>Sylhet</td>
+                <td>5.2 m</td>
+                <td class="medium">Medium</td>
+                <td>Pending</td>
+                <td>
+                    <button>Approve</button>
+                    <button class="reject">Reject</button>
+                </td>
+            </tr>
+
+            <tr>
+                <td>Sunamganj</td>
+                <td>3.1 m</td>
+                <td class="low">Low</td>
+                <td>Reviewed</td>
+                <td>
+                    <button>Approve</button>
+                </td>
+            </tr>
+        </tbody></table>
+
+        <div class="publish">
+            <h2>Publish Final Forecast</h2>
+            <p>Publish verified flood forecasts for public awareness.</p>
+            <button>Publish Forecast</button>
+        </div>
+
+    </div>
+
+<!-- Code injected by live-server -->
+<script>
+	// <![CDATA[  <-- For SVG support
+	if ('WebSocket' in window) {
+		(function () {
+			function refreshCSS() {
+				var sheets = [].slice.call(document.getElementsByTagName("link"));
+				var head = document.getElementsByTagName("head")[0];
+				for (var i = 0; i < sheets.length; ++i) {
+					var elem = sheets[i];
+					var parent = elem.parentElement || head;
+					parent.removeChild(elem);
+					var rel = elem.rel;
+					if (elem.href && typeof rel != "string" || rel.length == 0 || rel.toLowerCase() == "stylesheet") {
+						var url = elem.href.replace(/(&|\?)_cacheOverride=\d+/, '');
+						elem.href = url + (url.indexOf('?') >= 0 ? '&' : '?') + '_cacheOverride=' + (new Date().valueOf());
+					}
+					parent.appendChild(elem);
+				}
+			}
+			var protocol = window.location.protocol === 'http:' ? 'ws://' : 'wss://';
+			var address = protocol + window.location.host + window.location.pathname + '/ws';
+			var socket = new WebSocket(address);
+			socket.onmessage = function (msg) {
+				if (msg.data == 'reload') window.location.reload();
+				else if (msg.data == 'refreshcss') refreshCSS();
+			};
+			if (sessionStorage && !sessionStorage.getItem('IsThisFirstTime_Log_From_LiveServer')) {
+				console.log('Live reload enabled.');
+				sessionStorage.setItem('IsThisFirstTime_Log_From_LiveServer', true);
+			}
+		})();
+	}
+	else {
+		console.error('Upgrade your browser. This Browser is NOT supported WebSocket for Live-Reloading.');
+	}
+	// ]]>
+</script>
+
+</body></html>

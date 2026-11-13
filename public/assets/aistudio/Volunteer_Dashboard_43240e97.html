@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<!-- saved from url=(0036)http://127.0.0.1:5500/volunteer.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Volunteer Dashboard</title>
+    <link rel="stylesheet" href="./Volunteer Dashboard_files/volunteer.css">
+</head>
+<body>
+
+    <div class="sidebar">
+        <h2>FloodGuard</h2>
+        <p>Volunteer Panel</p>
+
+        <ul>
+            <li>Dashboard</li>
+            <li>SOS Requests</li>
+            <li>Rescue Coordination</li>
+            <li>Shelter Information</li>
+            <li>Emergency Status</li>
+            <li>Logout</li>
+        </ul>
+    </div>
+
+    <div class="main">
+
+        <div class="header">
+            <h1>Volunteer Dashboard</h1>
+            <p>AI-Based Flood Forecasting and Early Warning System</p>
+        </div>
+
+        <h2>Dashboard Overview</h2>
+
+        <div class="cards">
+
+            <div class="card">
+                <h3>SOS Requests</h3>
+                <h2>25</h2>
+                <p>Total emergency requests</p>
+                <button>View Requests</button>
+            </div>
+
+            <div class="card">
+                <h3>Rescue Operations</h3>
+                <h2>12</h2>
+                <p>Ongoing rescue activities</p>
+                <button>Coordinate Rescue</button>
+            </div>
+
+            <div class="card">
+                <h3>Available Shelters</h3>
+                <h2>18</h2>
+                <p>Available emergency shelters</p>
+                <button>View Shelters</button>
+            </div>
+
+        </div>
+
+        <h2>SOS Request Management</h2>
+
+        <table>
+            <tbody><tr>
+                <th>Name</th>
+                <th>Location</th>
+                <th>Emergency</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+
+            <tr>
+                <td>Samia</td>
+                <td>Dhaka</td>
+                <td class="high">Flood Rescue</td>
+                <td>Pending</td>
+                <td>
+                    <button>Accept</button>
+                </td>
+            </tr>
+
+            <tr>
+                <td>Sohel</td>
+                <td>Sylhet</td>
+                <td class="high">Emergency Help</td>
+                <td>Pending</td>
+                <td>
+                    <button>Accept</button>
+                </td>
+            </tr>
+
+            <tr>
+                <td>Mim</td>
+                <td>Sunamganj</td>
+                <td>Food Support</td>
+                <td>Completed</td>
+                <td>
+                    <button class="complete">Done</button>
+                </td>
+            </tr>
+        </tbody></table>
+
+        <h2>Rescue Coordination</h2>
+
+        <div class="sections">
+
+            <div class="section">
+                <h3>Rescue Activities</h3>
+                <p>Coordinate rescue operations in affected areas.</p>
+                <button>Manage Rescue</button>
+            </div>
+
+            <div class="section">
+                <h3>Shelter Information</h3>
+                <p>View and update emergency shelter information.</p>
+                <button>Manage Shelters</button>
+            </div>
+
+        </div>
+
+        <div class="status">
+            <h2>Emergency Response Status</h2>
+            <p>Update the current status of emergency response activities.</p>
+
+            <select>
+                <option>Select Status</option>
+                <option>Pending</option>
+                <option>In Progress</option>
+                <option>Completed</option>
+            </select>
+
+            <button>Update Status</button>
+        </div>
+
+    </div>
+
+<!-- Code injected by live-server -->
+<script>
+	// <![CDATA[  <-- For SVG support
+	if ('WebSocket' in window) {
+		(function () {
+			function refreshCSS() {
+				var sheets = [].slice.call(document.getElementsByTagName("link"));
+				var head = document.getElementsByTagName("head")[0];
+				for (var i = 0; i < sheets.length; ++i) {
+					var elem = sheets[i];
+					var parent = elem.parentElement || head;
+					parent.removeChild(elem);
+					var rel = elem.rel;
+					if (elem.href && typeof rel != "string" || rel.length == 0 || rel.toLowerCase() == "stylesheet") {
+						var url = elem.href.replace(/(&|\?)_cacheOverride=\d+/, '');
+						elem.href = url + (url.indexOf('?') >= 0 ? '&' : '?') + '_cacheOverride=' + (new Date().valueOf());
+					}
+					parent.appendChild(elem);
+				}
+			}
+			var protocol = window.location.protocol === 'http:' ? 'ws://' : 'wss://';
+			var address = protocol + window.location.host + window.location.pathname + '/ws';
+			var socket = new WebSocket(address);
+			socket.onmessage = function (msg) {
+				if (msg.data == 'reload') window.location.reload();
+				else if (msg.data == 'refreshcss') refreshCSS();
+			};
+			if (sessionStorage && !sessionStorage.getItem('IsThisFirstTime_Log_From_LiveServer')) {
+				console.log('Live reload enabled.');
+				sessionStorage.setItem('IsThisFirstTime_Log_From_LiveServer', true);
+			}
+		})();
+	}
+	else {
+		console.error('Upgrade your browser. This Browser is NOT supported WebSocket for Live-Reloading.');
+	}
+	// ]]>
+</script>
+
+</body></html>

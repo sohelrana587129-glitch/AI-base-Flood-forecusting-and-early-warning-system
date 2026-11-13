@@ -1,0 +1,68 @@
+h1{
+     font-family: "Isometra", serif;
+               font-style: italic;
+               /*font-size: medium;*/
+               font-weight: bold;
+               text-decoration: underline;
+               font-size: 33px;
+
+}
+input[type="email"] {
+  width: 300px;              /* ইনপুট বক্সের প্রস্থ */
+  padding: 10px;             /* ভেতরের স্পেস */
+  border: 2px solid #3498db; /* নীল বর্ডার */
+  border-radius: 5px;        /* কোণ গোলাকার */
+  font-size: 16px;           /* টেক্সট সাইজ */
+  outline: none;             /* ক্লিক করলে ডিফল্ট আউটলাইন বাদ */
+  transition: 0.3s;          /* হোভার/ফোকাসে স্মুথ ইফেক্ট */
+}
+
+input[type="email"]:focus {
+  border-color: #2ecc71;     /* ফোকাস করলে সবুজ বর্ডার */
+  box-shadow: 0 0 8px #2ecc71;
+}
+
+input[type="email"]::placeholder {
+  color: #888;               /* placeholder টেক্সটের রঙ */
+  font-style: italic;
+}
+input[type="text"] {
+  width: 300px;              /* ইনপুট বক্সের প্রস্থ */
+  padding: 10px;             /* ভেতরের স্পেস */
+  border: 2px solid #3498db; /* নীল বর্ডার */
+  border-radius: 5px;        /* কোণ গোলাকার */
+  font-size: 16px;           /* টেক্সট সাইজ */
+  outline: none;             /* ক্লিক করলে ডিফল্ট আউটলাইন বাদ */
+  transition: 0.3s;          /* হোভার/ফোকাসে স্মুথ ইফেক্ট */
+}
+input[type="number"] {
+  width: 300px;              
+  padding: 10px;            
+  border: 2px solid #3498db; 
+  border-radius: 5px;        
+  font-size: 16px;          
+  outline: none;             
+  transition: 0.3s;          
+}
+input[type="password"]{
+    width: 300px;
+    padding: 10px;
+    border: 2px solid #3498db;
+    border-radius: 5px;
+    font-size: 16px;
+    outline: none;
+    transition: 0.3s;
+}
+button{
+    color: blue;
+    background-color: #3498db;
+    width: 80px;
+    padding: 10px;
+}
+body{
+    background-image: url("image.png"); /* তোমার ইমেজ ফাইলের নাম */
+  background-size: 3000px;   /* পুরো স্ক্রিনে ফিট করবে */
+  background-repeat: no-repeat; /* রিপিট হবে না */
+  background-position: center;  /* মাঝখানে থাকবে */
+  font-family: Arial, sans-serif;
+}

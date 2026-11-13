@@ -1,0 +1,353 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Trusted administrator marker document",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "createdAt"]
+    },
+    "UserPublic": {
+      "title": "UserPublic",
+      "description": "Public user profile isolated from PII",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "firstName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "lastName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "displayRole": {
+          "type": "string",
+          "enum": ["Citizen", "Forecast Officer", "Authority", "Volunteer", "Admin"],
+          "maxLength": 40
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Active", "Suspended"],
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "firstName", "lastName", "displayRole", "status", "createdAt", "updatedAt"]
+    },
+    "UserPrivate": {
+      "title": "UserPrivate",
+      "description": "Strictly isolated PII document for a user",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "phone": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "email", "phone", "createdAt", "updatedAt"]
+    },
+    "SensorReading": {
+      "title": "SensorReading",
+      "description": "Incoming satellite SAR and IoT river gauge telemetry reading",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "stationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "stationName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "timeLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "waterLevel": {
+          "type": "number"
+        },
+        "rainfall": {
+          "type": "number"
+        },
+        "soilMoisture": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["NORMAL", "WARNING", "ALERT"],
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "stationId", "stationName", "timeLabel", "waterLevel", "rainfall", "soilMoisture", "status", "createdAt"]
+    },
+    "Forecast": {
+      "title": "Forecast",
+      "description": "Flood forecast validation record managed by Forecast Officers",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "waterLevel": {
+          "type": "number"
+        },
+        "rainfall": {
+          "type": "number"
+        },
+        "floodRisk": {
+          "type": "string",
+          "enum": ["Low", "Medium", "High"],
+          "maxLength": 20
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Reviewed", "Approved", "Rejected", "Published"],
+          "maxLength": 20
+        },
+        "aiSummary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "location", "waterLevel", "rainfall", "floodRisk", "status", "aiSummary", "createdAt", "updatedAt"]
+    },
+    "Warning": {
+      "title": "Warning",
+      "description": "Disaster management flood warning record",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "riskLevel": {
+          "type": "string",
+          "enum": ["Low", "Medium", "High"],
+          "maxLength": 20
+        },
+        "warningStatus": {
+          "type": "string",
+          "enum": ["Pending Review", "Published", "Cancelled"],
+          "maxLength": 30
+        },
+        "advisoryMessage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "location", "riskLevel", "warningStatus", "advisoryMessage", "createdAt", "updatedAt"]
+    },
+    "SosRequest": {
+      "title": "SosRequest",
+      "description": "Emergency SOS rescue and relief request managed by Volunteers",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "requesterName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "emergencyType": {
+          "type": "string",
+          "enum": ["Flood Rescue", "Emergency Help", "Food Support", "Medical Aid"],
+          "maxLength": 40
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "In Progress", "Completed"],
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "requesterName", "location", "emergencyType", "status", "createdAt", "updatedAt"]
+    },
+    "Shelter": {
+      "title": "Shelter",
+      "description": "Emergency flood shelter location and capacity",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "district": {
+          "type": "string",
+          "enum": ["sylhet", "dinajpur", "dhaka", "sunamganj"],
+          "maxLength": 40
+        },
+        "area": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "capacity": {
+          "type": "number"
+        },
+        "occupancy": {
+          "type": "number"
+        },
+        "elevation": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Available", "Near Capacity", "Full"],
+          "maxLength": 30
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "name", "district", "area", "capacity", "occupancy", "elevation", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Trusted administrator marker collection"
+    },
+    "/users/{userId}": {
+      "schema": "UserPublic",
+      "description": "Public user profiles isolated from PII"
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": "UserPrivate",
+      "description": "Isolated private PII data for a user"
+    },
+    "/sensor_readings/{readingId}": {
+      "schema": "SensorReading",
+      "description": "Real-time satellite SAR and water-level sensor readings"
+    },
+    "/forecasts/{forecastId}": {
+      "schema": "Forecast",
+      "description": "Flood forecast validation items"
+    },
+    "/warnings/{warningId}": {
+      "schema": "Warning",
+      "description": "Flood early warnings for disaster management"
+    },
+    "/sos_requests/{sosId}": {
+      "schema": "SosRequest",
+      "description": "Emergency SOS requests for volunteer coordination"
+    },
+    "/shelters/{shelterId}": {
+      "schema": "Shelter",
+      "description": "Flood shelter registry and live occupancy"
+    }
+  }
+}

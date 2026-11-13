@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<!-- saved from url=(0035)http://127.0.0.1:5500/disaster.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Disaster Management Dashboard</title>
+    <link rel="stylesheet" href="./Disaster Management Dashboard_files/disaster.css">
+</head>
+<body>
+
+    <div class="sidebar">
+        <h2>FloodGuard</h2>
+        <p>Disaster Management</p>
+
+        <ul>
+            <li>Dashboard</li>
+            <li>Review Warnings</li>
+            <li>Publish Warnings</li>
+            <li>Update Warnings</li>
+            <li>Emergency Monitoring</li>
+            <li>Disaster Response</li>
+            <li>Logout</li>
+        </ul>
+    </div>
+
+    <div class="main">
+
+        <div class="header">
+            <h1>Disaster Management Dashboard</h1>
+            <p>AI-Based Flood Forecasting and Early Warning System</p>
+        </div>
+
+        <h2>Dashboard Overview</h2>
+
+        <div class="cards">
+
+            <div class="card">
+                <h3>Review Warnings</h3>
+                <p>Review flood warnings received from forecast officers.</p>
+                <button>Review Now</button>
+            </div>
+
+            <div class="card">
+                <h3>Publish Warnings</h3>
+                <p>Publish approved warnings for citizens.</p>
+                <button>Publish</button>
+            </div>
+
+            <div class="card">
+                <h3>Emergency Situations</h3>
+                <p>Monitor current flood emergency situations.</p>
+                <button>Monitor</button>
+            </div>
+
+        </div>
+
+        <h2>Flood Warning Management</h2>
+
+        <table>
+            <tbody><tr>
+                <th>Location</th>
+                <th>Risk Level</th>
+                <th>Warning Status</th>
+                <th>Action</th>
+            </tr>
+
+            <tr>
+                <td>Dhaka</td>
+                <td class="high">High</td>
+                <td>Pending Review</td>
+                <td>
+                    <button>Review</button>
+                </td>
+            </tr>
+
+            <tr>
+                <td>Sylhet</td>
+                <td class="medium">Medium</td>
+                <td>Published</td>
+                <td>
+                    <button>Edit</button>
+                    <button class="cancel">Cancel</button>
+                </td>
+            </tr>
+
+            <tr>
+                <td>Sunamganj</td>
+                <td class="high">High</td>
+                <td>Pending Review</td>
+                <td>
+                    <button>Review</button>
+                </td>
+            </tr>
+        </tbody></table>
+
+        <h2>Emergency Situation Monitoring</h2>
+
+        <div class="emergency">
+            <div>
+                <h3>Flood Emergency Status</h3>
+                <p>Monitor affected areas and emergency updates.</p>
+            </div>
+
+            <div>
+                <h3>Disaster Response</h3>
+                <p>Manage rescue activities and emergency support.</p>
+            </div>
+        </div>
+
+        <div class="publish">
+            <h2>Warning Control Center</h2>
+            <p>Manage and publish verified flood warnings.</p>
+
+            <button>Publish Warning</button>
+            <button class="cancel">Cancel Warning</button>
+        </div>
+
+    </div>
+
+<!-- Code injected by live-server -->
+<script>
+	// <![CDATA[  <-- For SVG support
+	if ('WebSocket' in window) {
+		(function () {
+			function refreshCSS() {
+				var sheets = [].slice.call(document.getElementsByTagName("link"));
+				var head = document.getElementsByTagName("head")[0];
+				for (var i = 0; i < sheets.length; ++i) {
+					var elem = sheets[i];
+					var parent = elem.parentElement || head;
+					parent.removeChild(elem);
+					var rel = elem.rel;
+					if (elem.href && typeof rel != "string" || rel.length == 0 || rel.toLowerCase() == "stylesheet") {
+						var url = elem.href.replace(/(&|\?)_cacheOverride=\d+/, '');
+						elem.href = url + (url.indexOf('?') >= 0 ? '&' : '?') + '_cacheOverride=' + (new Date().valueOf());
+					}
+					parent.appendChild(elem);
+				}
+			}
+			var protocol = window.location.protocol === 'http:' ? 'ws://' : 'wss://';
+			var address = protocol + window.location.host + window.location.pathname + '/ws';
+			var socket = new WebSocket(address);
+			socket.onmessage = function (msg) {
+				if (msg.data == 'reload') window.location.reload();
+				else if (msg.data == 'refreshcss') refreshCSS();
+			};
+			if (sessionStorage && !sessionStorage.getItem('IsThisFirstTime_Log_From_LiveServer')) {
+				console.log('Live reload enabled.');
+				sessionStorage.setItem('IsThisFirstTime_Log_From_LiveServer', true);
+			}
+		})();
+	}
+	else {
+		console.error('Upgrade your browser. This Browser is NOT supported WebSocket for Live-Reloading.');
+	}
+	// ]]>
+</script>
+
+</body></html>

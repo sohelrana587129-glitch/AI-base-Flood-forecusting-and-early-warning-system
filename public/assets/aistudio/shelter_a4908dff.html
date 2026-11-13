@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Flood Shelter Finder</title>
+    <link rel="stylesheet" href="shelter.css">
+    
+</head>
+
+<body>
+
+<h1>Flood Shelter Finder</h1>
+
+<label>Select Location:</label><br><br>
+
+<select id="location" onchange="showArea()">
+    <option value="">-- Select Location --</option>
+    <option value="sylhet">Sylhet</option>
+    <option value="dinajpur">Dinajpur</option>
+</select>
+
+<div id="areas"></div>
+
+<div id="result"></div>
+
+<script>
+
+function showArea(){
+
+    let location = document.getElementById("location").value;
+    let areas = document.getElementById("areas");
+
+    document.getElementById("result").innerHTML = "";
+
+    if(location === "sylhet"){
+        areas.innerHTML = `
+        <h3>Select Area</h3>
+
+        <input type="radio" name="area"
+        onclick="showShelter('companiganj')">
+        Companiganj <br><br>
+
+        <input type="radio" name="area"
+        onclick="showShelter('jaintapur')">
+        Jaintapur
+        `;
+    }
+
+    else if(location === "dinajpur"){
+        areas.innerHTML = `
+        <h3>Select Area</h3>
+
+        <input type="radio" name="area"
+        onclick="showShelter('biral')">
+        Biral <br><br>
+
+        <input type="radio" name="area"
+        onclick="showShelter('birampur')">
+        Birampur
+        `;
+    }
+
+    else{
+        areas.innerHTML = "";
+    }
+}
+
+
+function showShelter(area){
+
+    let result = document.getElementById("result");
+
+    if(area === "companiganj"){
+        result.innerHTML = `
+        <div class="card">
+            <h3>Companiganj Shelters</h3>
+            <ul>
+                <li>Companiganj High School</li>
+                <li>Companiganj Govt College</li>
+                <li>Community Flood Center</li>
+            </ul>
+        </div>`;
+    }
+
+    else if(area === "jaintapur"){
+        result.innerHTML = `
+        <div class="card">
+            <h3>Jaintapur Shelters</h3>
+            <ul>
+                <li>Jaintapur High School</li>
+                <li>Jaintapur Govt Primary School</li>
+                <li>Union Parishad Shelter</li>
+            </ul>
+        </div>`;
+    }
+
+    else if(area === "biral"){
+        result.innerHTML = `
+        <div class="card">
+            <h3>Biral Shelters</h3>
+            <ul>
+                <li>Biral Pilot High School</li>
+                <li>Biral College</li>
+                <li>Biral Community Center</li>
+            </ul>
+        </div>`;
+    }
+
+    else if(area === "birampur"){
+        result.innerHTML = `
+        <div class="card">
+            <h3>Birampur Shelters</h3>
+            <ul>
+                <li>Birampur High School</li>
+                <li>Birampur College</li>
+                <li>Flood Protection Shelter</li>
+            </ul>
+        </div>`;
+    }
+}
+
+</script>
+
+</body>
+</html>

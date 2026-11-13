@@ -1,0 +1,10 @@
+{
+  "name": "Remix FloodGuard AI — Urban Flood Forecasting \u0026 Early Warning System",
+  "description": "AI-based flood forecasting and early warning system for urban areas using real-time satellite data, IoT water-level sensors, spatial GIS mapping, and multi-role emergency coordination.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

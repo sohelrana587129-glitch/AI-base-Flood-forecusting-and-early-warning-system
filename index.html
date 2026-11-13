@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      window.addEventListener('unhandledrejection', function (event) {
+        var reason = event && event.reason;
+        var msg = reason && (reason.message || String(reason));
+        if (typeof msg === 'string' && msg.indexOf('WebSocket closed without opened') !== -1) {
+          event.preventDefault();
+        }
+      });
+    </script>
+    <title>FloodGuard AI — Urban Flood Forecasting &amp; Early Warning System</title>
+    <meta name="description" content="AI-based flood forecasting and early warning system for urban areas using real-time satellite data, IoT water-level sensors, spatial GIS mapping, and multi-role emergency coordination." />
+    <meta property="og:title" content="FloodGuard AI — Urban Flood Forecasting &amp; Early Warning System" />
+    <meta property="og:description" content="AI-based flood forecasting and early warning system for urban areas using real-time satellite data, IoT water-level sensors, spatial GIS mapping, and multi-role emergency coordination." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  </head>
+  <body class="bg-slate-100 text-slate-900 antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
