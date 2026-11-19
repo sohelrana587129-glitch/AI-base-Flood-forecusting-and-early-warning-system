@@ -34,6 +34,14 @@ import {
   Lock,
   BellRing,
   KeyRound,
+  Menu,
+  X,
+  ChevronDown,
+  ShieldCheck,
+  UserPlus,
+  LayoutDashboard,
+  Building2,
+  Mail,
 } from 'lucide-react';
 import {
   auth,
@@ -46,6 +54,7 @@ import {
 import {
   AppTab,
   UserRole,
+  StaffAuthRole,
   SessionUser,
   SosAlertMessage,
   TelemetryPoint,
@@ -55,11 +64,18 @@ import {
   WarningItem,
   SosRequestItem,
   ShelterItem,
+  ShelterBookingItem,
   ManagedUserItem,
+  EmailLogItem,
+  UserEmailPreferences,
 } from './types';
 import { WaterMonitorChart } from './components/WaterMonitorChart';
 import { FloodRiskMap } from './components/FloodRiskMap';
 import { TrainedModelPanel } from './components/TrainedModelPanel';
+import {
+  EmailNotificationsPanel,
+  syncEmailLogsToFirestore,
+} from './components/EmailNotificationsPanel';
 import {
   loginLocalAccount,
   registerLocalAccount,
@@ -68,6 +84,11 @@ import {
   getLocalTelemetry,
   ingestLocalSensor,
   runLocalModelInference,
+  formatRoleDisplay,
+  getLocalManagedUsers,
+  createLocalUserByAdmin,
+  updateLocalUserByAdmin,
+  deleteLocalUserByAdmin,
 } from './services/localEngine';
 
 const INITIAL_FORECASTS: ForecastItem[] = [
@@ -134,26 +155,42 @@ const INITIAL_SOS: SosRequestItem[] = [
   {
     id: 'sos_samia',
     ownerId: 'local',
-    requesterName: 'Samia',
+    requesterName: 'Samia Sultana',
+    requesterPhone: '01712345678',
+    requesterEmail: 'samia.sultana@floodguard.gov.bd',
     location: 'Dhaka',
     emergencyType: 'Flood Rescue',
+    description: 'Ground floor submerged 1.4m near river embankment. 4 family members stranded on rooftop.',
     status: 'Pending',
+    isCritical: true,
+    submittedAt: '10:12 AM',
   },
   {
     id: 'sos_sohel',
     ownerId: 'local',
-    requesterName: 'Sohel',
+    requesterName: 'Sohel Rana',
+    requesterPhone: '01819876543',
+    requesterEmail: 'user@floodguard.gov.bd',
     location: 'Sylhet',
     emergencyType: 'Emergency Help',
+    description: 'Surma River water entered village road. Elderly patient requires immediate evacuation.',
     status: 'Pending',
+    isCritical: true,
+    submittedAt: '10:18 AM',
   },
   {
     id: 'sos_mim',
     ownerId: 'local',
-    requesterName: 'Mim',
+    requesterName: 'Israt Mim',
+    requesterPhone: '01911223344',
+    requesterEmail: 'israt.mim@floodguard.gov.bd',
     location: 'Sunamganj',
     emergencyType: 'Food Support',
+    description: '35 displaced families at Tahirpur shelter require dry food packets and clean drinking water.',
     status: 'Completed',
+    assignedVolunteer: 'Sohel Rana (Volunteer & SOS)',
+    isCritical: false,
+    submittedAt: '09:45 AM',
   },
 ];
 
@@ -325,15 +362,50 @@ const INITIAL_USERS: ManagedUserItem[] = [
   },
 ];
 
+const VALID_TABS: AppTab[] = [
+  'monitor',
+  'map',
+  'user',
+  'forecast',
+  'disaster',
+  'volunteer',
+  'shelter',
+  'admin',
+  'auth',
+];
+
+function getInitialTabFromHash(): AppTab {
+  if (typeof window === 'undefined') return 'monitor';
+  const raw = window.location.hash.replace(/^#\/?/, '').trim() as AppTab;
+  return VALID_TABS.includes(raw) ? raw : 'monitor';
+}
+
+function getDashboardTabForRole(role: UserRole): AppTab {
+  if (role === 'Citizen') return 'user';
+  if (role === 'Forecast Officer') return 'forecast';
+  if (role === 'Authority') return 'disaster';
+  if (role === 'Volunteer') return 'volunteer';
+  if (role === 'Admin') return 'admin';
+  return 'monitor';
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<AppTab>('monitor');
+  const [activeTab, setActiveTab] = useState<AppTab>(getInitialTabFromHash);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
 
-  // Role-Based Session User & SOS Messages State (strictly requires Register & Login)
-  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
+  // Role-Based Session User & SOS Messages State (verified by backend)
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(() => {
+    try {
+      const saved = sessionStorage.getItem('fg_session_v1');
+      return saved ? (JSON.parse(saved) as SessionUser) : null;
+    } catch {
+      return null;
+    }
+  });
   const [sosMessages, setSosMessages] = useState<SosAlertMessage[]>([]);
 
   // Monitor Dashboard State
@@ -376,15 +448,41 @@ export default function App() {
   const [shelters, setShelters] = useState<ShelterItem[]>(INITIAL_SHELTERS);
   const [managedUsers, setManagedUsers] = useState<ManagedUserItem[]>(INITIAL_USERS);
 
-  // Sub-navigation / filter states for each dashboard
-  const [forecastSubSection, setForecastSubSection] = useState<string>('Dashboard');
-  const [disasterSubSection, setDisasterSubSection] = useState<string>('Dashboard');
-  const [volunteerSubSection, setVolunteerSubSection] = useState<string>('Dashboard');
-  const [adminSubSection, setAdminSubSection] = useState<string>('Dashboard');
+  // Admin Create User Form State (Admin-only creation of Admin or Staff roles)
+  const [showAdminCreateUser, setShowAdminCreateUser] = useState(false);
+  const [adminNewFirstName, setAdminNewFirstName] = useState('');
+  const [adminNewLastName, setAdminNewLastName] = useState('');
+  const [adminNewEmail, setAdminNewEmail] = useState('');
+  const [adminNewPhone, setAdminNewPhone] = useState('');
+  const [adminNewPassword, setAdminNewPassword] = useState('');
+  const [adminNewRole, setAdminNewRole] = useState<StaffAuthRole>('Forecast Officer');
 
   // Shelter Finder State (matches shelter_a4908dff.html)
   const [selectedDistrict, setSelectedDistrict] = useState<string>('sylhet');
   const [selectedArea, setSelectedArea] = useState<string>('companiganj');
+
+  // Volunteer & SOS Shelter Capacity Management State
+  const [volunteerShelterDistrict, setVolunteerShelterDistrict] = useState<string>('all');
+  const [shelterDrafts, setShelterDrafts] = useState<
+    Record<string, { capacity: string; occupancy: string }>
+  >({});
+  const [showAddShelter, setShowAddShelter] = useState(false);
+  const [newShelterName, setNewShelterName] = useState('');
+  const [newShelterDistrict, setNewShelterDistrict] = useState<
+    'sylhet' | 'dinajpur' | 'dhaka' | 'sunamganj'
+  >('sylhet');
+  const [newShelterArea, setNewShelterArea] = useState('companiganj');
+  const [newShelterCapacity, setNewShelterCapacity] = useState('400');
+  const [newShelterOccupancy, setNewShelterOccupancy] = useState('0');
+  const [newShelterElevation, setNewShelterElevation] = useState('12.5');
+
+  // User Shelter Booking State (Minimum 2, Maximum 5 persons per booking)
+  const [shelterBookings, setShelterBookings] = useState<ShelterBookingItem[]>([]);
+  const [bookingShelterId, setBookingShelterId] = useState<string>('sh_comp_1');
+  const [userBookingPersons, setUserBookingPersons] = useState<number>(2);
+  const [userBookingName, setUserBookingName] = useState<string>('');
+  const [userBookingPhone, setUserBookingPhone] = useState<string>('');
+  const [bookingPersonsByShelter, setBookingPersonsByShelter] = useState<Record<string, number>>({});
 
   // New Warning / SOS Forms
   const [newWarnLocation, setNewWarnLocation] = useState('Sylhet');
@@ -402,8 +500,14 @@ export default function App() {
   const [newSosText, setNewSosText] = useState('');
   const [globalEmergencyStatus, setGlobalEmergencyStatus] = useState('In Progress');
 
-  // Login & Registration Form State (matches lg_3669f2ee.html & reg_d9814b67.html)
+  // Email Notifications Sync & Citizen Preferences State
+  const [emailRefreshTrigger, setEmailRefreshTrigger] = useState(0);
+  const [userEmailPrefs, setUserEmailPrefs] = useState<UserEmailPreferences | null>(null);
+  const [savingUserPrefs, setSavingUserPrefs] = useState(false);
+
+  // Login & Registration Form State with Role Selection Dropdown
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [loginRole, setLoginRole] = useState<StaffAuthRole>('Citizen');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPhone, setLoginPhone] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -414,8 +518,7 @@ export default function App() {
   const [regPhone, setRegPhone] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
-  const [regRole, setRegRole] = useState<UserRole>('Citizen');
-  const [regRolePasscode, setRegRolePasscode] = useState('');
+  const [regRole] = useState<'Citizen'>('Citizen');
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -424,45 +527,212 @@ export default function App() {
     }, 4500);
   };
 
+  const navigateToTab = useCallback((tab: AppTab) => {
+    setAuthErrorMessage(null);
+    setMobileMenuOpen(false);
+    setActiveTab(tab);
+    if (typeof window !== 'undefined') {
+      window.location.hash = `#/${tab}`;
+    }
+  }, []);
+
+  // Sync browser hash changes (protects direct URL navigation)
+  useEffect(() => {
+    const onHashChange = () => {
+      const next = getInitialTabFromHash();
+      setActiveTab(next);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
   // Check if current sessionUser has access to a given role-protected tab
-  const hasRoleAccess = (requiredRole: 'Admin' | 'Forecast Officer' | 'Authority' | 'Volunteer') => {
+  const hasRoleAccess = (requiredRole: UserRole) => {
     if (!sessionUser) return false;
     if (sessionUser.role === 'Admin') return true;
     return sessionUser.role === requiredRole;
   };
 
-  // Fetch protected SOS messages ONLY when sessionUser is logged in & registered
-  const fetchSosMessages = useCallback(async (email?: string) => {
-    const activeEmail = email || sessionUser?.email;
-    if (!activeEmail) {
-      setSosMessages([]);
-      return;
-    }
+  // Persist sessionUser in sessionStorage
+  useEffect(() => {
     try {
-      const res = await fetch('/api/v1/sos-messages', {
-        headers: {
-          'x-auth-email': activeEmail,
-        },
+      if (sessionUser) {
+        sessionStorage.setItem('fg_session_v1', JSON.stringify(sessionUser));
+      } else {
+        sessionStorage.removeItem('fg_session_v1');
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [sessionUser]);
+
+  // Verify stored session token with backend on mount
+  useEffect(() => {
+    const verifyBackendSession = async () => {
+      if (!sessionUser?.token) return;
+      try {
+        const res = await fetch('/api/v1/auth/session', {
+          headers: { Authorization: `Bearer ${sessionUser.token}` },
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          if (res.status === 401) {
+            setSessionUser(null);
+            setSosMessages([]);
+          } else if (res.ok) {
+            const data = await res.json();
+            if (data.sessionUser) {
+              setSessionUser(data.sessionUser);
+              setSosMessages(data.sosMessages || []);
+            }
+          }
+        }
+      } catch {
+        // Offline / static hosting fallback retains local session
+      }
+    };
+    verifyBackendSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fetch protected SOS messages ONLY when sessionUser has an authenticated session
+  const fetchSosMessages = useCallback(
+    async (user?: SessionUser | null) => {
+      const active = user || sessionUser;
+      if (!active) {
+        setSosMessages([]);
+        return;
+      }
+      try {
+        const headers: Record<string, string> = {};
+        if (active.token) {
+          headers.Authorization = `Bearer ${active.token}`;
+        }
+        const res = await fetch('/api/v1/sos-messages', { headers });
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          const data = await res.json();
+          setSosMessages(data.sosMessages || []);
+          if (!currentUser && Array.isArray(data.sosRequests) && data.sosRequests.length > 0) {
+            setSosRequests(data.sosRequests);
+          }
+        } else if (!active.token) {
+          setSosMessages(getStoredSosMessages());
+        } else {
+          setSosMessages([]);
+        }
+      } catch {
+        setSosMessages(getStoredSosMessages());
+      }
+    },
+    [sessionUser, currentUser]
+  );
+
+  // Fetch Admin user registry from backend when Admin is authenticated
+  const fetchAdminUsers = useCallback(async (user?: SessionUser | null) => {
+    const active = user || sessionUser;
+    if (!active || active.role !== 'Admin') return;
+    try {
+      const res = await fetch('/api/v1/admin/users', {
+        headers: active.token ? { Authorization: `Bearer ${active.token}` } : {},
       });
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
-        setSosMessages(data.sosMessages || []);
-      } else {
-        setSosMessages(getStoredSosMessages());
+        if (Array.isArray(data.users)) {
+          setManagedUsers(data.users);
+          return;
+        }
+      }
+      setManagedUsers(getLocalManagedUsers());
+    } catch {
+      setManagedUsers(getLocalManagedUsers());
+    }
+  }, [sessionUser]);
+
+  const fetchShelterBookings = useCallback(async (user?: SessionUser | null) => {
+    const active = user || sessionUser;
+    if (!active) {
+      setShelterBookings([]);
+      return;
+    }
+    try {
+      const res = await fetch('/api/v1/shelter-bookings', {
+        headers: active.token ? { Authorization: `Bearer ${active.token}` } : {},
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (Array.isArray(data.bookings)) {
+          setShelterBookings(data.bookings);
+        }
       }
     } catch {
-      setSosMessages(getStoredSosMessages());
+      // ignore offline fallback
     }
-  }, [sessionUser?.email]);
+  }, [sessionUser]);
+
+  const fetchUserEmailPreferences = useCallback(async (user?: SessionUser | null) => {
+    const active = user || sessionUser;
+    if (!active?.token) {
+      setUserEmailPrefs(null);
+      return;
+    }
+    try {
+      const res = await fetch('/api/v1/email-preferences', {
+        headers: { Authorization: `Bearer ${active.token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUserEmailPrefs(data);
+      }
+    } catch {
+      // ignore offline fallback
+    }
+  }, [sessionUser]);
 
   useEffect(() => {
-    if (sessionUser?.email) {
-      fetchSosMessages(sessionUser.email);
+    if (sessionUser) {
+      fetchSosMessages(sessionUser);
+      fetchShelterBookings(sessionUser);
+      fetchUserEmailPreferences(sessionUser);
+      if (sessionUser.role === 'Admin') {
+        fetchAdminUsers(sessionUser);
+      }
     } else {
       setSosMessages([]);
+      setShelterBookings([]);
+      setUserEmailPrefs(null);
     }
-  }, [sessionUser, fetchSosMessages]);
+  }, [sessionUser, fetchSosMessages, fetchShelterBookings, fetchUserEmailPreferences, fetchAdminUsers]);
+
+  const handleLogout = async () => {
+    const token = sessionUser?.token;
+    if (token) {
+      try {
+        await fetch('/api/v1/auth/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // ignore network errors on logout
+      }
+    }
+    setSessionUser(null);
+    setSosMessages([]);
+    setShelterBookings([]);
+    setAuthErrorMessage(null);
+    if (
+      activeTab === 'user' ||
+      activeTab === 'forecast' ||
+      activeTab === 'disaster' ||
+      activeTab === 'volunteer' ||
+      activeTab === 'admin'
+    ) {
+      navigateToTab('monitor');
+    }
+    showToast('Successfully logged out. Protected dashboards and SOS stream locked.');
+  };
 
   // Fetch telemetry from Express backend with automatic client-side fallback for Vercel static hosting
   const fetchTelemetry = useCallback(async () => {
@@ -493,6 +763,26 @@ export default function App() {
   useEffect(() => {
     fetchTelemetry();
   }, [fetchTelemetry]);
+
+  // Fetch live shelter capacities from Express backend
+  const fetchShelters = useCallback(async () => {
+    try {
+      const res = await fetch('/api/v1/shelters');
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (Array.isArray(data.shelters) && data.shelters.length > 0) {
+          setShelters(data.shelters);
+        }
+      }
+    } catch {
+      // keep initial/Firestore shelters on offline fallback
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchShelters();
+  }, [fetchShelters]);
 
   // Listen to Firebase Auth state
   useEffect(() => {
@@ -706,16 +996,25 @@ export default function App() {
     showToast('Downloaded real-time Water Level & Rainfall CSV.');
   };
 
-  // Ingest incoming sensor & satellite reading into backend + Firestore
+  // Ingest incoming sensor & satellite reading into backend + Firestore (Forecast Officer only)
   const handleIngestSensor = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!sessionUser || sessionUser.role !== 'Forecast Officer') {
+      showToast('Locked: Telemetry data cannot be edited or changed except by a Forecast Officer.');
+      return;
+    }
+
     setIngesting(true);
     try {
       let latestTimeLabel = 'Now';
       try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionUser.token) {
+          headers.Authorization = `Bearer ${sessionUser.token}`;
+        }
         const res = await fetch('/api/v1/ingest-sensor', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             stationId,
             waterLevel: Number(newSensorLevel),
@@ -724,6 +1023,14 @@ export default function App() {
           }),
         });
         const contentType = res.headers.get('content-type') || '';
+        if (res.status === 403) {
+          const errData = contentType.includes('application/json') ? await res.json() : {};
+          showToast(
+            errData.error ||
+              'Locked: Only an authenticated Forecast Officer can edit or ingest sensor telemetry data.'
+          );
+          return;
+        }
         if (!res.ok || !contentType.includes('application/json')) {
           throw new Error('Fallback to local sensor ingest');
         }
@@ -952,15 +1259,62 @@ export default function App() {
     showToast(`Published early warning for ${newWarn.location}.`);
   };
 
-  // Volunteer SOS Request status update
+  // Volunteer SOS Request status update (triggers automatic citizen status email)
   const handleUpdateSosStatus = async (
     item: SosRequestItem,
     newStatus: SosRequestItem['status']
   ) => {
-    if (item.status === 'Completed') {
+    if (item.status === 'Completed' && sessionUser?.role !== 'Admin') {
       showToast('Completed SOS requests are locked in terminal state.');
       return;
     }
+
+    let emailOutcomeNote = '';
+    if (sessionUser?.token) {
+      try {
+        const res = await fetch(`/api/v1/sos-requests/${encodeURIComponent(item.id)}/status`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${sessionUser.token}`,
+          },
+          body: JSON.stringify({
+            status: newStatus,
+            requesterName: item.requesterName,
+            requesterPhone: item.requesterPhone,
+            requesterEmail: item.requesterEmail,
+            location: item.location,
+            emergencyType: item.emergencyType,
+            description: item.description,
+          }),
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await res.json();
+          if (!res.ok) {
+            showToast(data.error || 'Failed to update SOS request status.');
+            return;
+          }
+          if (Array.isArray(data.sosRequests) && !currentUser) {
+            setSosRequests(data.sosRequests);
+          }
+          if (Array.isArray(data.sosMessages)) {
+            setSosMessages(data.sosMessages);
+          }
+          if (data.emailLog) {
+            const log = data.emailLog as EmailLogItem;
+            await syncEmailLogsToFirestore([log], currentUser);
+            emailOutcomeNote = ` · Status email ${log.status} to ${log.recipientEmail}`;
+          } else if (data.skippedNotificationReason) {
+            emailOutcomeNote = ` · ${data.skippedNotificationReason}`;
+          }
+          setEmailRefreshTrigger((n) => n + 1);
+        }
+      } catch {
+        // offline fallback updates local/Firestore state below
+      }
+    }
+
     if (currentUser && item.ownerId === currentUser.uid) {
       try {
         await updateDoc(doc(db, 'sos_requests', item.id), {
@@ -970,56 +1324,125 @@ export default function App() {
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `sos_requests/${item.id}`);
       }
-    } else {
+    } else if (!sessionUser?.token || currentUser) {
       setSosRequests((prev) =>
-        prev.map((s) => (s.id === item.id ? { ...s, status: newStatus } : s))
+        prev.map((s) =>
+          s.id === item.id
+            ? {
+                ...s,
+                status: newStatus,
+                assignedVolunteer: sessionUser
+                  ? `${sessionUser.firstName} ${sessionUser.lastName} (${formatRoleDisplay(sessionUser.role)})`
+                  : s.assignedVolunteer,
+              }
+            : s
+        )
       );
     }
-    showToast(`SOS request for ${item.requesterName} updated to ${newStatus}.`);
+    showToast(`SOS for ${item.requesterName} updated to ${newStatus}${emailOutcomeNote}.`);
   };
 
-  // Create new SOS Request & Broadcast SOS Message (requires login & registration)
+  // Citizen saves their own email notification preferences
+  const handleSaveUserEmailPrefs = async (next: UserEmailPreferences) => {
+    if (!sessionUser?.token) return;
+    setSavingUserPrefs(true);
+    try {
+      const res = await fetch('/api/v1/email-preferences', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionUser.token}`,
+        },
+        body: JSON.stringify({
+          district: next.district,
+          sosAlertsEnabled: next.sosAlertsEnabled,
+          statusUpdatesEnabled: next.statusUpdatesEnabled,
+          broadcastsEnabled: next.broadcastsEnabled,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.preferences) {
+        setUserEmailPrefs(data.preferences);
+        showToast('Updated your flood email notification preferences.');
+      } else {
+        showToast(data.error || 'Could not save preferences.');
+      }
+    } finally {
+      setSavingUserPrefs(false);
+    }
+  };
+
+  // Create new SOS Request & Broadcast SOS Message (requires verified authenticated session)
   const handleCreateSos = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sessionUser) {
       showToast('You must Register and Login first to send or receive SOS messages.');
-      setActiveTab('auth');
+      navigateToTab('auth');
       return;
     }
     const senderNameVal = newSosName.trim() || `${sessionUser.firstName} ${sessionUser.lastName}`;
     const sosId = `sos_${Date.now()}`;
+    const isCriticalSos =
+      newSosType === 'Flood Rescue' ||
+      newSosType === 'Emergency Help' ||
+      newSosText.toLowerCase().includes('critical') ||
+      newSosText.toLowerCase().includes('trapped') ||
+      newSosText.toLowerCase().includes('rooftop');
+
     const newSos: SosRequestItem = {
       id: sosId,
       ownerId: currentUser?.uid || 'local',
       requesterName: senderNameVal.slice(0, 100),
+      requesterPhone: newSosPhone.trim() || sessionUser.phone,
+      requesterEmail: sessionUser.email,
       location: newSosLocation.slice(0, 100),
       emergencyType: newSosType,
+      description:
+        newSosText.trim() ||
+        `URGENT SOS (${newSosType}): Immediate assistance requested by ${senderNameVal} in ${newSosLocation}.`,
       status: 'Pending',
+      isCritical: isCriticalSos,
+      submittedAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
     };
 
     const sosPayload = {
+      sosId,
       senderName: senderNameVal,
       senderPhone: newSosPhone.trim() || sessionUser.phone,
+      senderEmail: sessionUser.email,
       location: newSosLocation,
       emergencyType: newSosType,
-      message:
-        newSosText.trim() ||
-        `URGENT SOS (${newSosType}): Immediate assistance requested by ${senderNameVal} in ${newSosLocation}.`,
+      message: newSos.description || '',
     };
 
+    let dispatchedEmailCount = 0;
+    let sentOkCount = 0;
+    let backendSyncedSos = false;
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (sessionUser.token) {
+        headers.Authorization = `Bearer ${sessionUser.token}`;
+      }
       const res = await fetch('/api/v1/sos-messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-auth-email': sessionUser.email,
-        },
+        headers,
         body: JSON.stringify(sosPayload),
       });
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         setSosMessages(data.sosMessages || []);
+        if (Array.isArray(data.sosRequests) && !currentUser) {
+          setSosRequests(data.sosRequests);
+          backendSyncedSos = true;
+        }
+        if (Array.isArray(data.emailDispatchResults) && data.emailDispatchResults.length > 0) {
+          const logs = data.emailDispatchResults as EmailLogItem[];
+          dispatchedEmailCount = logs.length;
+          sentOkCount = logs.filter((l) => l.status !== 'failed').length;
+          await syncEmailLogsToFirestore(logs, currentUser);
+          setEmailRefreshTrigger((n) => n + 1);
+        }
       } else {
         const updatedMsgs = addLocalSosMessage(sosPayload);
         setSosMessages(updatedMsgs);
@@ -1043,17 +1466,435 @@ export default function App() {
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `sos_requests/${sosId}`);
       }
-    } else {
+    } else if (!backendSyncedSos) {
       setSosRequests((prev) => [newSos, ...prev]);
     }
     setNewSosName('');
     setNewSosPhone('');
     setNewSosText('');
-    showToast(`SOS message broadcasted and logged for ${newSos.requesterName}.`);
+    const emailSummary =
+      dispatchedEmailCount > 0
+        ? ` Alert emails logged: ${dispatchedEmailCount} (${sentOkCount} sent, ${dispatchedEmailCount - sentOkCount} failed).`
+        : '';
+    showToast(`SOS logged for ${newSos.requesterName}.${emailSummary}`);
   };
 
-  // Admin User Management actions
+  // Volunteer & SOS Shelter Finder Capacity Management (updates backend, Firestore, and live Shelter Finder)
+  const handleUpdateShelterCapacity = async (
+    sh: ShelterItem,
+    rawCapacity: number,
+    rawOccupancy: number,
+    customToast?: string
+  ) => {
+    if (!sessionUser || !hasRoleAccess('Volunteer')) {
+      showToast('Only authorized Volunteer & SOS or Admin accounts can manage shelter capacity.');
+      return;
+    }
+
+    const nextCapacity = Math.min(50000, Math.max(1, Math.round(rawCapacity || sh.capacity)));
+    const nextOccupancy = Math.min(
+      nextCapacity,
+      Math.max(0, Math.round(Number.isNaN(rawOccupancy) ? sh.occupancy : rawOccupancy))
+    );
+    const nextStatus: ShelterItem['status'] =
+      nextOccupancy >= nextCapacity
+        ? 'Full'
+        : nextOccupancy >= nextCapacity * 0.85
+        ? 'Near Capacity'
+        : 'Available';
+
+    try {
+      const res = await fetch(`/api/v1/shelters/${encodeURIComponent(sh.id)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionUser.token ? { Authorization: `Bearer ${sessionUser.token}` } : {}),
+        },
+        body: JSON.stringify({ capacity: nextCapacity, occupancy: nextOccupancy }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json') && !res.ok) {
+        const errData = await res.json();
+        showToast(errData.error || 'Failed to update shelter capacity.');
+        return;
+      }
+    } catch {
+      // static fallback continues updating state/Firestore
+    }
+
+    if (currentUser && sh.ownerId === currentUser.uid) {
+      try {
+        await updateDoc(doc(db, 'shelters', sh.id), {
+          capacity: nextCapacity,
+          occupancy: nextOccupancy,
+          status: nextStatus,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `shelters/${sh.id}`);
+      }
+    }
+
+    setShelters((prev) =>
+      prev.map((item) =>
+        item.id === sh.id
+          ? { ...item, capacity: nextCapacity, occupancy: nextOccupancy, status: nextStatus }
+          : item
+      )
+    );
+    setShelterDrafts((prev) => {
+      const next = { ...prev };
+      delete next[sh.id];
+      return next;
+    });
+    showToast(
+      customToast ||
+        `Updated ${sh.name}: ${nextOccupancy}/${nextCapacity} evacuees (${nextStatus}).`
+    );
+  };
+
+  const handleCreateShelter = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sessionUser || !hasRoleAccess('Volunteer')) {
+      showToast('Only authorized Volunteer & SOS or Admin accounts can add shelters.');
+      return;
+    }
+
+    const capNum = Math.min(50000, Math.max(1, Math.round(Number(newShelterCapacity) || 300)));
+    const occNum = Math.min(capNum, Math.max(0, Math.round(Number(newShelterOccupancy) || 0)));
+    const elevNum = Number((Math.min(5000, Math.max(0, Number(newShelterElevation) || 12))).toFixed(1));
+    const statusVal: ShelterItem['status'] =
+      occNum >= capNum ? 'Full' : occNum >= capNum * 0.85 ? 'Near Capacity' : 'Available';
+
+    let createdShelter: ShelterItem = {
+      id: `sh_${Date.now()}`,
+      ownerId: currentUser?.uid || 'local',
+      name: newShelterName.trim().slice(0, 120),
+      district: newShelterDistrict,
+      area: newShelterArea.trim().toLowerCase().slice(0, 60),
+      capacity: capNum,
+      occupancy: occNum,
+      elevation: elevNum,
+      status: statusVal,
+    };
+
+    try {
+      const res = await fetch('/api/v1/shelters', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionUser.token ? { Authorization: `Bearer ${sessionUser.token}` } : {}),
+        },
+        body: JSON.stringify({
+          name: createdShelter.name,
+          district: createdShelter.district,
+          area: createdShelter.area,
+          capacity: capNum,
+          occupancy: occNum,
+          elevation: elevNum,
+        }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.shelter) {
+          createdShelter = { ...data.shelter, ownerId: currentUser?.uid || 'local' };
+        }
+      }
+    } catch {
+      // fallback to local/Firestore creation
+    }
+
+    if (currentUser) {
+      try {
+        await setDoc(doc(db, 'shelters', createdShelter.id), {
+          ownerId: currentUser.uid,
+          name: createdShelter.name,
+          district: createdShelter.district,
+          area: createdShelter.area,
+          capacity: createdShelter.capacity,
+          occupancy: createdShelter.occupancy,
+          elevation: createdShelter.elevation,
+          status: createdShelter.status,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `shelters/${createdShelter.id}`);
+      }
+    } else {
+      setShelters((prev) => [createdShelter, ...prev]);
+    }
+
+    setNewShelterName('');
+    setNewShelterCapacity('400');
+    setNewShelterOccupancy('0');
+    setShowAddShelter(false);
+    showToast(`Added shelter "${createdShelter.name}" (${occNum}/${capNum} capacity).`);
+  };
+
+  // User Shelter Booking Handler (Authenticated users: minimum 2, maximum 5 persons)
+  const handleBookShelter = async (
+    sh: ShelterItem,
+    rawPersons: number,
+    customName?: string,
+    customPhone?: string
+  ) => {
+    if (!sessionUser) {
+      setLoginRole('Citizen');
+      setAuthMode('login');
+      showToast('Please log in or register as a User to book shelter space (2–5 persons).');
+      navigateToTab('auth');
+      return;
+    }
+
+    const persons = Number(rawPersons);
+    if (!Number.isInteger(persons) || persons < 2 || persons > 5) {
+      showToast('Shelter booking requires a minimum of 2 persons and a maximum of 5 persons.');
+      return;
+    }
+
+    const remaining = sh.capacity - sh.occupancy;
+    if (remaining < persons) {
+      showToast(
+        `Not enough space at ${sh.name}. Only ${Math.max(0, remaining)} spot(s) remaining.`
+      );
+      return;
+    }
+
+    const bookerNameVal =
+      (customName || '').trim() || `${sessionUser.firstName} ${sessionUser.lastName}`;
+    const bookerPhoneVal = (customPhone || '').trim() || sessionUser.phone;
+    const nextOccupancy = sh.occupancy + persons;
+    const nextStatus: ShelterItem['status'] =
+      nextOccupancy >= sh.capacity
+        ? 'Full'
+        : nextOccupancy >= sh.capacity * 0.85
+        ? 'Near Capacity'
+        : 'Available';
+
+    let createdBooking: ShelterBookingItem = {
+      id: `bk_${Date.now()}`,
+      ownerId: currentUser?.uid || sessionUser.id,
+      shelterId: sh.id,
+      shelterName: sh.name,
+      bookerName: bookerNameVal.slice(0, 100),
+      bookerPhone: bookerPhoneVal.slice(0, 40),
+      bookerEmail: sessionUser.email,
+      persons,
+      status: 'Confirmed',
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    try {
+      const res = await fetch(`/api/v1/shelters/${encodeURIComponent(sh.id)}/book`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionUser.token ? { Authorization: `Bearer ${sessionUser.token}` } : {}),
+        },
+        body: JSON.stringify({
+          persons,
+          bookerName: bookerNameVal,
+          bookerPhone: bookerPhoneVal,
+        }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.error || 'Could not complete shelter booking.');
+          return;
+        }
+        if (data.booking) createdBooking = data.booking;
+        if (Array.isArray(data.shelters)) setShelters(data.shelters);
+        if (Array.isArray(data.bookings)) setShelterBookings(data.bookings);
+      } else {
+        setShelters((prev) =>
+          prev.map((item) =>
+            item.id === sh.id
+              ? { ...item, occupancy: nextOccupancy, status: nextStatus }
+              : item
+          )
+        );
+        setShelterBookings((prev) => [createdBooking, ...prev]);
+      }
+    } catch {
+      setShelters((prev) =>
+        prev.map((item) =>
+          item.id === sh.id
+            ? { ...item, occupancy: nextOccupancy, status: nextStatus }
+            : item
+        )
+      );
+      setShelterBookings((prev) => [createdBooking, ...prev]);
+    }
+
+    if (currentUser) {
+      if (sh.ownerId === currentUser.uid) {
+        try {
+          await updateDoc(doc(db, 'shelters', sh.id), {
+            occupancy: nextOccupancy,
+            status: nextStatus,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `shelters/${sh.id}`);
+        }
+      }
+      try {
+        await setDoc(doc(db, 'shelter_bookings', createdBooking.id), {
+          ownerId: currentUser.uid,
+          shelterId: sh.id,
+          shelterName: sh.name.slice(0, 120),
+          bookerName: bookerNameVal.slice(0, 100),
+          persons,
+          status: 'Confirmed',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `shelter_bookings/${createdBooking.id}`);
+      }
+    }
+
+    showToast(
+      `Booked ${persons} spots at ${sh.name} for ${bookerNameVal} (${nextOccupancy}/${sh.capacity} occupied).`
+    );
+  };
+
+  // Admin User Management actions (Admin-only via backend API + local + Firestore)
+  const handleAdminCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sessionUser || sessionUser.role !== 'Admin') {
+      showToast('Only an authorized Admin can create user or Admin accounts.');
+      return;
+    }
+
+    if (adminNewPassword.length < 6) {
+      showToast('Password must be at least 6 characters long.');
+      return;
+    }
+
+    const payload = {
+      firstName: adminNewFirstName,
+      lastName: adminNewLastName,
+      email: adminNewEmail,
+      phone: adminNewPhone,
+      password: adminNewPassword,
+      role: adminNewRole,
+    };
+
+    try {
+      const res = await fetch('/api/v1/admin/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionUser.token ? { Authorization: `Bearer ${sessionUser.token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.error || 'Failed to create user account.');
+          return;
+        }
+        createLocalUserByAdmin(payload);
+        if (data.user) {
+          setManagedUsers((prev) => [data.user, ...prev]);
+        }
+      } else {
+        const localRes = createLocalUserByAdmin(payload);
+        if (!localRes.ok) {
+          showToast(localRes.error || 'Failed to create user account.');
+          return;
+        }
+        setManagedUsers(getLocalManagedUsers());
+      }
+    } catch {
+      const localRes = createLocalUserByAdmin(payload);
+      if (!localRes.ok) {
+        showToast(localRes.error || 'Failed to create user account.');
+        return;
+      }
+      setManagedUsers(getLocalManagedUsers());
+    }
+
+    setAdminNewFirstName('');
+    setAdminNewLastName('');
+    setAdminNewEmail('');
+    setAdminNewPhone('');
+    setAdminNewPassword('');
+    setShowAdminCreateUser(false);
+    showToast(`Created ${formatRoleDisplay(adminNewRole)} account for ${payload.firstName}.`);
+  };
+
+  const handleAdminChangeRole = async (userItem: ManagedUserItem, newRole: StaffAuthRole) => {
+    if (!sessionUser || sessionUser.role !== 'Admin') {
+      showToast('Only an authorized Admin can assign or modify roles.');
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/v1/admin/users/${encodeURIComponent(userItem.id)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionUser.token ? { Authorization: `Bearer ${sessionUser.token}` } : {}),
+        },
+        body: JSON.stringify({ role: newRole }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json') && !res.ok) {
+        const data = await res.json();
+        showToast(data.error || 'Failed to update user role.');
+        return;
+      }
+    } catch {
+      // static fallback
+    }
+
+    updateLocalUserByAdmin(userItem.id, { role: newRole });
+    if (currentUser && userItem.ownerId === currentUser.uid) {
+      try {
+        await updateDoc(doc(db, 'users', userItem.id), {
+          displayRole: newRole,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `users/${userItem.id}`);
+      }
+    } else {
+      setManagedUsers((prev) =>
+        prev.map((u) => (u.id === userItem.id ? { ...u, displayRole: newRole } : u))
+      );
+    }
+    showToast(`Assigned ${userItem.firstName} to ${formatRoleDisplay(newRole)}.`);
+  };
+
   const handleDeleteUser = async (userItem: ManagedUserItem) => {
+    if (!sessionUser || sessionUser.role !== 'Admin') {
+      showToast('Only an authorized Admin can delete users.');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/v1/admin/users/${encodeURIComponent(userItem.id)}`, {
+        method: 'DELETE',
+        headers: sessionUser.token ? { Authorization: `Bearer ${sessionUser.token}` } : {},
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json') && !res.ok) {
+        const data = await res.json();
+        showToast(data.error || 'Cannot delete user.');
+        return;
+      }
+    } catch {
+      // static fallback
+    }
+
+    deleteLocalUserByAdmin(userItem.id);
     if (currentUser && userItem.ownerId === currentUser.uid) {
       try {
         await deleteDoc(doc(db, 'users', userItem.id));
@@ -1067,8 +1908,33 @@ export default function App() {
   };
 
   const handleToggleUserStatus = async (userItem: ManagedUserItem) => {
+    if (!sessionUser || sessionUser.role !== 'Admin') {
+      showToast('Only an authorized Admin can update account status.');
+      return;
+    }
     const nextStatus: 'Active' | 'Suspended' =
       userItem.status === 'Active' ? 'Suspended' : 'Active';
+
+    try {
+      const res = await fetch(`/api/v1/admin/users/${encodeURIComponent(userItem.id)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionUser.token ? { Authorization: `Bearer ${sessionUser.token}` } : {}),
+        },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json') && !res.ok) {
+        const data = await res.json();
+        showToast(data.error || 'Cannot update user status.');
+        return;
+      }
+    } catch {
+      // static fallback
+    }
+
+    updateLocalUserByAdmin(userItem.id, { status: nextStatus });
     if (currentUser && userItem.ownerId === currentUser.uid) {
       try {
         await updateDoc(doc(db, 'users', userItem.id), {
@@ -1086,10 +1952,11 @@ export default function App() {
     showToast(`Updated ${userItem.firstName} status to ${nextStatus}.`);
   };
 
-  // Secure Role Login Handler (supports both Express backend and Vercel static deployment)
-  const handleLoginSubmit = async (e: React.FormEvent) => {
+  // Secure Role Login Handler (verifies credentials & assigned role on backend/database)
+  const handleLoginSubmit = async (e: React.FormEvent, roleOverride?: StaffAuthRole) => {
     e.preventDefault();
     setAuthErrorMessage(null);
+    const effectiveRole = roleOverride || loginRole;
 
     let authResult: {
       ok: boolean;
@@ -1106,18 +1973,27 @@ export default function App() {
           email: loginEmail,
           phone: loginPhone,
           password: loginPassword,
+          role: effectiveRole,
         }),
       });
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         const data = await res.json();
         if (!res.ok) {
-          // Also check localStorage registered accounts in case user registered on client
-          const localCheck = loginLocalAccount(loginEmail, loginPhone, loginPassword);
-          if (localCheck.ok) {
-            authResult = localCheck;
+          // If 403 (role mismatch / suspended), surface exact backend error immediately without fallback bypass
+          if (res.status === 403) {
+            authResult = { ok: false, error: data.error };
           } else {
-            authResult = { ok: false, error: data.error || 'Invalid login credentials.' };
+            // Check localStorage registered accounts only if not found on server memory
+            const localCheck = loginLocalAccount(
+              loginEmail,
+              loginPhone,
+              loginPassword,
+              effectiveRole
+            );
+            authResult = localCheck.ok
+              ? localCheck
+              : { ok: false, error: data.error || localCheck.error || 'Invalid login credentials.' };
           }
         } else {
           authResult = {
@@ -1127,10 +2003,10 @@ export default function App() {
           };
         }
       } else {
-        authResult = loginLocalAccount(loginEmail, loginPhone, loginPassword);
+        authResult = loginLocalAccount(loginEmail, loginPhone, loginPassword, effectiveRole);
       }
     } catch {
-      authResult = loginLocalAccount(loginEmail, loginPhone, loginPassword);
+      authResult = loginLocalAccount(loginEmail, loginPhone, loginPassword, effectiveRole);
     }
 
     if (!authResult || !authResult.ok || !authResult.sessionUser) {
@@ -1142,23 +2018,31 @@ export default function App() {
     setSosMessages(authResult.sosMessages || []);
     setLoginPassword('');
     showToast(
-      `Authenticated as ${authResult.sessionUser.firstName} ${authResult.sessionUser.lastName} (${authResult.sessionUser.role}). Real-time SOS messages unlocked!`
+      `Signed in as ${authResult.sessionUser.firstName} ${authResult.sessionUser.lastName} (${formatRoleDisplay(authResult.sessionUser.role)}). Redirected to dashboard.`
     );
 
-    if (authResult.sessionUser.role === 'Admin') setActiveTab('admin');
-    else if (authResult.sessionUser.role === 'Forecast Officer') setActiveTab('forecast');
-    else if (authResult.sessionUser.role === 'Volunteer') setActiveTab('volunteer');
-    else if (authResult.sessionUser.role === 'Authority') setActiveTab('disaster');
-    else setActiveTab('monitor');
+    navigateToTab(getDashboardTabForRole(authResult.sessionUser.role));
   };
 
-  // Registration Form Submission (supports both Express backend and Vercel static deployment, unlocks SOS messages, and syncs to Firestore if connected)
+  // Registration Form Submission (Public users can ONLY register as User (General Public); staff/Admin roles are Admin-provisioned)
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthErrorMessage(null);
 
+    if (regPassword.length < 6) {
+      setAuthErrorMessage('Password must be at least 6 characters long.');
+      return;
+    }
+
     if (regPassword !== regConfirmPassword) {
       setAuthErrorMessage('Password and Confirm Password do not match.');
+      return;
+    }
+
+    if ((regRole as UserRole) !== 'Citizen') {
+      setAuthErrorMessage(
+        'Public registration is restricted to User (General Public) accounts only. Staff and Admin roles can only be created or assigned by an authorized administrator.'
+      );
       return;
     }
 
@@ -1169,19 +2053,15 @@ export default function App() {
       phone: regPhone,
       password: regPassword,
       confirmPassword: regConfirmPassword,
-      role: regRole,
-      rolePasscode: regRolePasscode,
+      role: 'Citizen' as const,
     };
-
-    // Always register in local engine as well so client-side persistence is in sync
-    const localReg = registerLocalAccount(regPayload);
 
     let regResult: {
       ok: boolean;
       error?: string;
       sessionUser?: SessionUser;
       sosMessages?: SosAlertMessage[];
-    } = localReg;
+    } | null = null;
 
     try {
       const res = await fetch('/api/v1/auth/register', {
@@ -1201,13 +2081,16 @@ export default function App() {
           sessionUser: data.sessionUser,
           sosMessages: data.sosMessages || [],
         };
+        registerLocalAccount(regPayload);
+      } else {
+        regResult = registerLocalAccount(regPayload);
       }
     } catch {
-      // Use localReg fallback on Vercel static deployment
+      regResult = registerLocalAccount(regPayload);
     }
 
-    if (!regResult.ok || !regResult.sessionUser) {
-      setAuthErrorMessage(regResult.error || 'Registration failed.');
+    if (!regResult || !regResult.ok || !regResult.sessionUser) {
+      setAuthErrorMessage(regResult?.error || 'Registration failed.');
       return;
     }
 
@@ -1223,7 +2106,7 @@ export default function App() {
       phone: regPhone.trim().slice(0, 40),
     };
 
-    if (currentUser && regRole !== 'Admin') {
+    if (currentUser) {
       try {
         await setDoc(doc(db, 'users', usrId), {
           ownerId: currentUser.uid,
@@ -1258,166 +2141,309 @@ export default function App() {
     setRegPhone('');
     setRegPassword('');
     setRegConfirmPassword('');
-    setRegRolePasscode('');
 
     showToast(
-      `Registered & logged in as ${regResult.sessionUser.firstName} (${regResult.sessionUser.role}). Real-time SOS messages are now active!`
+      `Registered as ${regResult.sessionUser.firstName} (${formatRoleDisplay(regResult.sessionUser.role)}). Redirected to your dashboard.`
     );
-    setActiveTab('monitor');
+    navigateToTab(getDashboardTabForRole(regResult.sessionUser.role));
   };
 
-  // Reusable Role Lock Screen when an unauthorized user tries to open Admin, Forecast, Disaster, or Volunteer tabs
+  // Protected Route Gate when an unauthenticated or wrong-role user attempts to open a restricted dashboard
   const renderRoleLockGate = (
-    requiredRoleName: 'Admin' | 'Forecast Officer' | 'Authority' | 'Volunteer',
+    requiredRoleName: StaffAuthRole,
     defaultEmail: string
-  ) => (
-    <main className="w-full max-w-lg mx-auto p-6 md:p-12">
-      <div className="bg-white rounded-2xl border border-slate-200 p-7 dashboard-card space-y-5">
-        <div className="flex items-center gap-3 text-red-600">
-          <div className="w-11 h-11 rounded-xl bg-red-50 border border-red-200 flex items-center justify-center shrink-0">
-            <Lock className="w-5 h-5 text-red-600" />
+  ) => {
+    const requiredLabel = formatRoleDisplay(requiredRoleName);
+    return (
+      <main className="w-full max-w-lg mx-auto p-6 md:p-12">
+        <div className="bg-white rounded-2xl border border-slate-200 p-7 dashboard-card space-y-5">
+          <div className="flex items-center gap-3 text-red-600">
+            <div className="w-11 h-11 rounded-xl bg-red-50 border border-red-200 flex items-center justify-center shrink-0">
+              <Lock className="w-5 h-5 text-red-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">
+                {sessionUser ? 'Access Denied — Role Permission Required' : `${requiredLabel} Authorization Required`}
+              </h2>
+              <p className="text-xs text-slate-600">
+                {sessionUser
+                  ? `Only accounts verified as ${requiredLabel} (or Admin) can access this dashboard.`
+                  : `This route is protected. Sign in with an account assigned to ${requiredLabel} to continue.`}
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">
-              {requiredRoleName} Authorization Required
-            </h2>
-            <p className="text-xs text-slate-600">
-              This panel is protected. Enter the authorized {requiredRoleName} password (or Admin credentials) to gain access.
-            </p>
-          </div>
+
+          {sessionUser ? (
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 leading-relaxed">
+                You are currently signed in as{' '}
+                <strong>
+                  {sessionUser.firstName} {sessionUser.lastName}
+                </strong>{' '}
+                with role <strong>{formatRoleDisplay(sessionUser.role)}</strong>, which does not have
+                permission for the <strong>{requiredLabel}</strong> dashboard.
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => navigateToTab(getDashboardTabForRole(sessionUser.role))}
+                  className="flex-1 py-2.5 px-4 bg-[#123c69] hover:bg-[#245786] text-white text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                >
+                  Return to My Dashboard ({formatRoleDisplay(sessionUser.role)})
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg cursor-pointer"
+                >
+                  Logout &amp; Switch Account
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {authErrorMessage && (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
+                  {authErrorMessage}
+                </div>
+              )}
+
+              <form onSubmit={(e) => handleLoginSubmit(e, requiredRoleName)} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Assigned Role
+                  </label>
+                  <div className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm font-semibold text-[#123c69]">
+                    {requiredLabel}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Account Email
+                  </label>
+                  <input
+                    type="email"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder={defaultEmail}
+                    required
+                    className="w-full px-3.5 py-2 border border-slate-300 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder={`Enter ${requiredLabel} password`}
+                    required
+                    className="w-full px-3.5 py-2 border border-slate-300 rounded-lg text-sm font-mono"
+                  />
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 bg-[#123c69] hover:bg-[#245786] text-white text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                  >
+                    Verify &amp; Open {requiredLabel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginRole(requiredRoleName);
+                      setLoginEmail(defaultEmail);
+                      setAuthMode('login');
+                      navigateToTab('auth');
+                    }}
+                    className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg cursor-pointer"
+                  >
+                    Login / Register
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
         </div>
-
-        {sessionUser && (
-          <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
-            You are currently logged in as <strong>{sessionUser.firstName} ({sessionUser.role})</strong>, which does not have permission for the <strong>{requiredRoleName}</strong> panel.
-          </div>
-        )}
-
-        {authErrorMessage && (
-          <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
-            {authErrorMessage}
-          </div>
-        )}
-
-        <form onSubmit={handleLoginSubmit} className="space-y-3.5">
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Role Account Email
-            </label>
-            <input
-              type="email"
-              value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
-              placeholder={defaultEmail}
-              required
-              className="w-full px-3.5 py-2 border border-slate-300 rounded-lg text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Secure Role Password
-            </label>
-            <input
-              type="password"
-              value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)}
-              placeholder={`Enter ${requiredRoleName} password`}
-              required
-              className="w-full px-3.5 py-2 border border-slate-300 rounded-lg text-sm font-mono"
-            />
-          </div>
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="submit"
-              className="flex-1 py-2.5 bg-[#123c69] hover:bg-[#245786] text-white text-xs font-bold rounded-lg transition-colors cursor-pointer"
-            >
-              Verify Password &amp; Unlock {requiredRoleName}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setLoginEmail(defaultEmail);
-                setAuthMode('login');
-                setActiveTab('auth');
-              }}
-              className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg cursor-pointer"
-            >
-              Full Login Page
-            </button>
-          </div>
-        </form>
-      </div>
-    </main>
-  );
+      </main>
+    );
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-100 text-slate-900">
-      {/* Top Bar Contract: Zone 1 (Wordmark) - Zone 2 (Single-line Tabs) - Zone 3 (Primary Auth CTA) */}
-      <header className="bg-[#123c69] text-white border-b border-slate-800 px-6 py-3.5 flex items-center justify-between gap-8 sticky top-0 z-30">
-        <button
-          type="button"
-          onClick={() => setActiveTab('monitor')}
-          className="text-lg font-extrabold tracking-tight text-[#55d6be] whitespace-nowrap shrink-0 cursor-pointer"
-        >
-          FloodGuard AI
-        </button>
+      {/* Simplified Single-Line Horizontal Navigation Bar (Responsive on Mobile) */}
+      <header className="bg-[#123c69] text-white border-b border-slate-800 sticky top-0 z-30">
+        <div className="max-w-[1360px] mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-6">
+          {/* Left: FloodGuard AI Logo */}
+          <button
+            type="button"
+            onClick={() => navigateToTab('monitor')}
+            className="inline-flex items-center gap-2 text-lg font-extrabold tracking-tight text-[#55d6be] whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Droplets className="w-5 h-5 text-[#55d6be]" />
+            <span>FloodGuard AI</span>
+          </button>
 
-        <nav className="flex items-center gap-5 overflow-x-auto text-xs md:text-sm font-medium">
-          {[
-            { id: 'monitor', label: 'Monitor Dashboard' },
-            { id: 'map', label: 'Flood Risk Map' },
-            { id: 'forecast', label: 'Forecast Officer' },
-            { id: 'disaster', label: 'Disaster Mgmt' },
-            { id: 'volunteer', label: 'Volunteer & SOS' },
-            { id: 'shelter', label: 'Shelter Finder' },
-            { id: 'admin', label: 'Admin Panel' },
-            { id: 'auth', label: 'Login & Register' },
-          ].map((tab) => (
+          {/* Center: Clean Horizontal Nav Links (Desktop) */}
+          <nav className="hidden md:flex items-center gap-7 text-sm font-medium">
             <button
-              key={tab.id}
               type="button"
-              onClick={() => {
-                setAuthErrorMessage(null);
-                setActiveTab(tab.id as AppTab);
-              }}
-              className={`py-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 ${
-                activeTab === tab.id
-                  ? 'border-[#55d6be] text-white font-bold'
+              onClick={() => navigateToTab('monitor')}
+              className={`py-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 ${
+                activeTab === 'monitor'
+                  ? 'border-[#55d6be] text-white font-semibold'
                   : 'border-transparent text-slate-200 hover:text-white'
               }`}
             >
-              {tab.label}
+              Monitor Dashboard
             </button>
-          ))}
-        </nav>
+            <button
+              type="button"
+              onClick={() => navigateToTab('map')}
+              className={`py-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 ${
+                activeTab === 'map'
+                  ? 'border-[#55d6be] text-white font-semibold'
+                  : 'border-transparent text-slate-200 hover:text-white'
+              }`}
+            >
+              Flood Risk Map
+            </button>
+            {sessionUser && (
+              <button
+                type="button"
+                onClick={() => navigateToTab(getDashboardTabForRole(sessionUser.role))}
+                className={`py-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 inline-flex items-center gap-1.5 ${
+                  activeTab === getDashboardTabForRole(sessionUser.role)
+                    ? 'border-[#55d6be] text-white font-semibold'
+                    : 'border-transparent text-slate-200 hover:text-white'
+                }`}
+              >
+                <LayoutDashboard className="w-4 h-4 text-[#55d6be]" />
+                <span>{formatRoleDisplay(sessionUser.role)} Dashboard</span>
+              </button>
+            )}
+          </nav>
 
-        <div className="flex items-center gap-3 shrink-0">
-          {sessionUser ? (
-            <button
-              type="button"
-              onClick={() => {
-                setSessionUser(null);
-                setSosMessages([]);
-                showToast('Logged out of role session. SOS message stream locked.');
-              }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>
-                {sessionUser.firstName} · {sessionUser.role} (Logout)
-              </span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setActiveTab('auth')}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-[#159b83] hover:bg-[#087c68] text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Role Login / Register</span>
-            </button>
-          )}
+          {/* Right: Prominent Login / Register CTA or Active Session + Logout (Desktop) */}
+          <div className="hidden md:flex items-center gap-3 shrink-0">
+            {sessionUser ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => navigateToTab(getDashboardTabForRole(sessionUser.role))}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-100 hover:text-white bg-[#245786]/70 hover:bg-[#245786] rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#55d6be]" />
+                  <span>
+                    {sessionUser.firstName} · {formatRoleDisplay(sessionUser.role)}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Logout</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode('login');
+                  navigateToTab('auth');
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2 text-xs md:text-sm font-semibold bg-[#159b83] hover:bg-[#087c68] text-white rounded-lg shadow-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <LogIn className="w-4 h-4" />
+                <span>Login / Register</span>
+              </button>
+            )}
+          </div>
+
+          {/* Mobile Hamburger Button */}
+          <button
+            type="button"
+            aria-label="Toggle navigation menu"
+            onClick={() => setMobileMenuOpen((prev) => !prev)}
+            className="md:hidden p-2 rounded-lg text-slate-200 hover:text-white hover:bg-[#245786] cursor-pointer"
+          >
+            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
         </div>
+
+        {/* Mobile Responsive Drawer */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-[#245786] bg-[#0f3156] px-4 py-3 space-y-2">
+            <button
+              type="button"
+              onClick={() => navigateToTab('monitor')}
+              className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium cursor-pointer ${
+                activeTab === 'monitor'
+                  ? 'bg-[#245786] text-white font-semibold'
+                  : 'text-slate-200 hover:bg-[#245786]/60'
+              }`}
+            >
+              Monitor Dashboard
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToTab('map')}
+              className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium cursor-pointer ${
+                activeTab === 'map'
+                  ? 'bg-[#245786] text-white font-semibold'
+                  : 'text-slate-200 hover:bg-[#245786]/60'
+              }`}
+            >
+              Flood Risk Map
+            </button>
+            {sessionUser && (
+              <button
+                type="button"
+                onClick={() => navigateToTab(getDashboardTabForRole(sessionUser.role))}
+                className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium cursor-pointer ${
+                  activeTab === getDashboardTabForRole(sessionUser.role)
+                    ? 'bg-[#245786] text-white font-semibold'
+                    : 'text-slate-200 hover:bg-[#245786]/60'
+                }`}
+              >
+                {formatRoleDisplay(sessionUser.role)} Dashboard
+              </button>
+            )}
+            <div className="pt-2 border-t border-[#245786]">
+              {sessionUser ? (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-slate-200">
+                    {sessionUser.firstName} ({formatRoleDisplay(sessionUser.role)})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Logout</span>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    navigateToTab('auth');
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold bg-[#159b83] hover:bg-[#087c68] text-white rounded-lg cursor-pointer"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>Login / Register</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Live SOS Emergency Message Banner: ONLY shown if user has Registered & Logged In */}
@@ -1441,13 +2467,6 @@ export default function App() {
               <strong>SOS Emergency Messages Locked:</strong> You must <strong>Register and Login</strong> to receive or send real-time SOS emergency messages.
             </span>
           </div>
-          <button
-            type="button"
-            onClick={() => setActiveTab('auth')}
-            className="text-xs font-bold text-[#55d6be] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            Login / Register Now →
-          </button>
         </div>
       )}
 
@@ -1517,6 +2536,15 @@ export default function App() {
               >
                 <RefreshCw className="w-4 h-4" />
                 <span>Refresh</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => navigateToTab('shelter')}
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#123c69] hover:bg-[#245786] text-white text-xs font-semibold rounded-lg shadow-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <MapPin className="w-4 h-4 text-[#55d6be]" />
+                <span>Shelter Finder</span>
               </button>
             </div>
           </div>
@@ -1641,7 +2669,9 @@ export default function App() {
                   <span className="font-normal text-slate-500 font-mono tabular-nums">
                     {metrics.lastUpdated}
                   </span>
-                  {sessionUser ? ` · Logged in as ${sessionUser.firstName} (${sessionUser.role})` : ' · Guest View (Login to unlock SOS messages)'}
+                  {sessionUser
+                    ? ` · Logged in as ${sessionUser.firstName} (${formatRoleDisplay(sessionUser.role)})`
+                    : ' · Guest View (Login to unlock SOS messages)'}
                 </span>
               </div>
 
@@ -1686,7 +2716,7 @@ export default function App() {
           {/* Real-Time Incoming Sensor & Satellite Telemetry Ingestion Bar + Active Trained Model Strip */}
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5 dashboard-card">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                 <div>
                   <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <Satellite className="w-4 h-4 text-blue-600" />
@@ -1696,6 +2726,12 @@ export default function App() {
                     Push new water-level, rainfall, and satellite soil moisture readings into the backend database &amp; AI prediction pipeline
                   </p>
                 </div>
+                {sessionUser?.role !== 'Forecast Officer' && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 border border-slate-200 text-[11px] font-semibold text-slate-600 shrink-0 self-start">
+                    <Lock className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Read-Only · Forecast Officer Only</span>
+                  </span>
+                )}
               </div>
 
               <form
@@ -1709,10 +2745,24 @@ export default function App() {
                   <input
                     type="number"
                     step="0.01"
-                    value={newSensorLevel}
-                    onChange={(e) => setNewSensorLevel(e.target.value)}
+                    value={
+                      sessionUser?.role === 'Forecast Officer'
+                        ? newSensorLevel
+                        : metrics.currentLevel.toFixed(2)
+                    }
+                    onChange={(e) => {
+                      if (sessionUser?.role === 'Forecast Officer') {
+                        setNewSensorLevel(e.target.value);
+                      }
+                    }}
+                    disabled={sessionUser?.role !== 'Forecast Officer'}
+                    readOnly={sessionUser?.role !== 'Forecast Officer'}
                     required
-                    className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 font-mono"
+                    className={`w-full text-xs border border-slate-300 rounded-lg px-3 py-2 font-mono ${
+                      sessionUser?.role !== 'Forecast Officer'
+                        ? 'bg-slate-100 text-slate-500 cursor-not-allowed'
+                        : 'bg-white text-slate-900'
+                    }`}
                   />
                 </div>
                 <div>
@@ -1722,10 +2772,24 @@ export default function App() {
                   <input
                     type="number"
                     step="0.1"
-                    value={newSensorRain}
-                    onChange={(e) => setNewSensorRain(e.target.value)}
+                    value={
+                      sessionUser?.role === 'Forecast Officer'
+                        ? newSensorRain
+                        : metrics.maxRainfall30m.toFixed(1)
+                    }
+                    onChange={(e) => {
+                      if (sessionUser?.role === 'Forecast Officer') {
+                        setNewSensorRain(e.target.value);
+                      }
+                    }}
+                    disabled={sessionUser?.role !== 'Forecast Officer'}
+                    readOnly={sessionUser?.role !== 'Forecast Officer'}
                     required
-                    className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 font-mono"
+                    className={`w-full text-xs border border-slate-300 rounded-lg px-3 py-2 font-mono ${
+                      sessionUser?.role !== 'Forecast Officer'
+                        ? 'bg-slate-100 text-slate-500 cursor-not-allowed'
+                        : 'bg-white text-slate-900'
+                    }`}
                   />
                 </div>
                 <div>
@@ -1737,21 +2801,56 @@ export default function App() {
                     step="1"
                     min="0"
                     max="100"
-                    value={newSensorMoisture}
-                    onChange={(e) => setNewSensorMoisture(e.target.value)}
+                    value={
+                      sessionUser?.role === 'Forecast Officer'
+                        ? newSensorMoisture
+                        : String(points[points.length - 1]?.soilMoisture ?? 94)
+                    }
+                    onChange={(e) => {
+                      if (sessionUser?.role === 'Forecast Officer') {
+                        setNewSensorMoisture(e.target.value);
+                      }
+                    }}
+                    disabled={sessionUser?.role !== 'Forecast Officer'}
+                    readOnly={sessionUser?.role !== 'Forecast Officer'}
                     required
-                    className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 font-mono"
+                    className={`w-full text-xs border border-slate-300 rounded-lg px-3 py-2 font-mono ${
+                      sessionUser?.role !== 'Forecast Officer'
+                        ? 'bg-slate-100 text-slate-500 cursor-not-allowed'
+                        : 'bg-white text-slate-900'
+                    }`}
                   />
                 </div>
                 <button
                   type="submit"
-                  disabled={ingesting}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                  disabled={ingesting || sessionUser?.role !== 'Forecast Officer'}
+                  className={`inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                    sessionUser?.role === 'Forecast Officer'
+                      ? 'bg-[#159b83] hover:bg-[#087c68] text-white cursor-pointer'
+                      : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                  }`}
                 >
-                  <PlusCircle className="w-4 h-4" />
-                  <span>{ingesting ? 'Processing...' : 'Ingest Sensor Data'}</span>
+                  {sessionUser?.role === 'Forecast Officer' ? (
+                    <>
+                      <PlusCircle className="w-4 h-4" />
+                      <span>{ingesting ? 'Processing...' : 'Ingest Sensor Data'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-4 h-4" />
+                      <span>Forecast Officer Only</span>
+                    </>
+                  )}
                 </button>
               </form>
+              {sessionUser?.role !== 'Forecast Officer' && (
+                <p className="text-[11px] text-slate-500 mt-3 flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span>
+                    Telemetry inputs are locked. Only an authenticated <strong>Forecast Officer</strong> can edit or ingest sensor data.
+                  </span>
+                </p>
+              )}
             </div>
 
             {/* Active Trained Model Forecast Card */}
@@ -1764,7 +2863,16 @@ export default function App() {
                   </span>
                   <button
                     type="button"
-                    onClick={() => setActiveTab('forecast')}
+                    onClick={() => {
+                      if (hasRoleAccess('Forecast Officer')) {
+                        navigateToTab('forecast');
+                      } else {
+                        setLoginRole('Forecast Officer');
+                        setAuthMode('login');
+                        showToast('Sign in as Forecast Officer to upload and run custom flood models.');
+                        navigateToTab('auth');
+                      }
+                    }}
                     className="text-xs font-semibold text-blue-600 hover:underline cursor-pointer"
                   >
                     Upload Custom Model →
@@ -1825,7 +2933,7 @@ export default function App() {
               </div>
               {sessionUser && (
                 <span className="text-xs font-semibold text-emerald-700">
-                  Unlocked for {sessionUser.firstName} ({sessionUser.role})
+                  Unlocked for {sessionUser.firstName} ({formatRoleDisplay(sessionUser.role)})
                 </span>
               )}
             </div>
@@ -1860,7 +2968,7 @@ export default function App() {
                 </p>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('auth')}
+                  onClick={() => navigateToTab('auth')}
                   className="px-4 py-2 bg-[#123c69] hover:bg-[#245786] text-white text-xs font-semibold rounded-lg cursor-pointer"
                 >
                   Go to Login / Registration
@@ -1878,36 +2986,427 @@ export default function App() {
         </main>
       )}
 
+      {/* TAB 2B: GENERAL USER PORTAL DASHBOARD (Protected by User/Citizen or Admin role) */}
+      {activeTab === 'user' &&
+        (hasRoleAccess('Citizen') ? (
+          <main className="w-full max-w-[1280px] mx-auto p-4 md:p-8 space-y-6">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h1 className="text-2xl font-bold text-[#123c69]">User Dashboard</h1>
+                  <p className="text-sm text-slate-600 mt-1">
+                    Signed in as {sessionUser?.firstName} {sessionUser?.lastName} ({sessionUser?.email}) · Real-Time Flood Alerts &amp; Emergency SOS
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigateToTab('monitor')}
+                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg cursor-pointer"
+                  >
+                    Live Telemetry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigateToTab('map')}
+                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg cursor-pointer"
+                  >
+                    Flood Risk Map
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigateToTab('shelter')}
+                    className="px-3.5 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-lg cursor-pointer"
+                  >
+                    Find Nearby Shelter
+                  </button>
+                </div>
+              </div>
+
+              <section className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-1.5">
+                  <h3 className="text-sm font-bold text-[#123c69]">River Status</h3>
+                  <div
+                    className={`text-2xl font-extrabold ${
+                      metrics.currentLevel >= 2.2 ? 'text-red-600' : 'text-emerald-600'
+                    }`}
+                  >
+                    {metrics.currentLevel >= 2.2 ? 'ALERT' : 'NORMAL'} ({metrics.currentLevel.toFixed(2)}m)
+                  </div>
+                  <p className="text-xs text-slate-500">Latest monitored gauge reading</p>
+                </div>
+
+                <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-1.5">
+                  <h3 className="text-sm font-bold text-[#123c69]">Published Early Warnings</h3>
+                  <div className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
+                    {warnings.filter((w) => w.warningStatus === 'Published').length}
+                  </div>
+                  <p className="text-xs text-slate-500">Official active flood advisories</p>
+                </div>
+
+                <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-1.5">
+                  <h3 className="text-sm font-bold text-[#123c69]">Verified Shelters</h3>
+                  <div className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
+                    {shelters.filter((s) => s.status !== 'Full').length}
+                  </div>
+                  <p className="text-xs text-slate-500">High-elevation shelters accepting evacuees</p>
+                </div>
+              </section>
+
+              <section className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
+                <h2 className="text-base font-bold text-[#123c69] flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  <span>Published Flood Early Warnings</span>
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  {warnings
+                    .filter((w) => w.warningStatus === 'Published')
+                    .map((w) => (
+                      <div
+                        key={w.id}
+                        className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 space-y-1"
+                      >
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-slate-900">{w.location}</span>
+                          <span
+                            className={`font-bold ${
+                              w.riskLevel === 'High'
+                                ? 'text-red-600'
+                                : w.riskLevel === 'Medium'
+                                ? 'text-amber-700'
+                                : 'text-emerald-700'
+                            }`}
+                          >
+                            {w.riskLevel} Risk
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-700">{w.advisoryMessage}</p>
+                      </div>
+                    ))}
+                </div>
+              </section>
+
+              {/* User Shelter Booking Section (Minimum 2, Maximum 5 Persons) */}
+              <section className="bg-white p-5 rounded-xl border border-slate-200 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-base font-bold text-[#123c69] flex items-center gap-2">
+                      <Building2 className="w-4 h-4 text-[#159b83]" />
+                      <span>Book Emergency Shelter Space (2–5 Persons)</span>
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Reserve confirmed spots for your family or group (minimum 2 persons, up to 5 persons per booking).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigateToTab('shelter')}
+                    className="text-xs font-semibold text-[#0d6efd] hover:underline cursor-pointer self-start sm:self-auto"
+                  >
+                    Browse All Shelters →
+                  </button>
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const chosen =
+                      shelters.find((s) => s.id === bookingShelterId) ||
+                      shelters.find((s) => s.status !== 'Full') ||
+                      shelters[0];
+                    if (!chosen) return;
+                    handleBookShelter(chosen, userBookingPersons, userBookingName, userBookingPhone);
+                  }}
+                  className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end"
+                >
+                  <div className="lg:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Select Available Shelter
+                    </label>
+                    <select
+                      value={bookingShelterId}
+                      onChange={(e) => setBookingShelterId(e.target.value)}
+                      className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white"
+                    >
+                      {shelters.map((sh) => {
+                        const free = Math.max(0, sh.capacity - sh.occupancy);
+                        return (
+                          <option key={sh.id} value={sh.id} disabled={free < 2}>
+                            {sh.name} ({sh.area}, {sh.district}) — {free} spots free
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Group Size (Min 2, Max 5)
+                    </label>
+                    <select
+                      value={userBookingPersons}
+                      onChange={(e) => setUserBookingPersons(Number(e.target.value))}
+                      className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white font-semibold"
+                    >
+                      <option value={2}>2 Persons</option>
+                      <option value={3}>3 Persons</option>
+                      <option value={4}>4 Persons</option>
+                      <option value={5}>5 Persons</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Contact Name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={`${sessionUser?.firstName || ''} ${sessionUser?.lastName || ''}`.trim()}
+                      value={userBookingName}
+                      onChange={(e) => setUserBookingName(e.target.value)}
+                      className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-lg cursor-pointer whitespace-nowrap"
+                  >
+                    Confirm Shelter Booking
+                  </button>
+                </form>
+
+                {shelterBookings.length > 0 && (
+                  <div className="pt-3 border-t border-slate-100 space-y-2">
+                    <h3 className="text-xs font-bold text-slate-700">
+                      Your Confirmed Shelter Bookings ({shelterBookings.length})
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {shelterBookings.map((bk) => (
+                        <div
+                          key={bk.id}
+                          className="p-3 rounded-lg border border-emerald-200 bg-emerald-50/50 flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div>
+                            <div className="font-bold text-slate-900">{bk.shelterName}</div>
+                            <div className="text-slate-600">
+                              Booked by {bk.bookerName} · <strong>{bk.persons} persons</strong> · {bk.timestamp}
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded bg-emerald-600 text-white font-semibold text-[11px]">
+                            {bk.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <form
+                onSubmit={handleCreateSos}
+                className="bg-white p-5 rounded-xl border border-slate-200 space-y-3"
+              >
+                <h2 className="text-base font-bold text-[#123c69] flex items-center gap-2">
+                  <BellRing className="w-4 h-4 text-red-600" />
+                  <span>Send Emergency SOS Help Request</span>
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Request rescue boats, medical aid, or emergency relief directly to Volunteer &amp; Disaster Management teams.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Your Name</label>
+                    <input
+                      type="text"
+                      placeholder={sessionUser?.firstName || 'Full name'}
+                      value={newSosName}
+                      onChange={(e) => setNewSosName(e.target.value)}
+                      className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Phone Number</label>
+                    <input
+                      type="text"
+                      placeholder={sessionUser?.phone || '017XXXXXXXX'}
+                      value={newSosPhone}
+                      onChange={(e) => setNewSosPhone(e.target.value)}
+                      className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Location</label>
+                    <select
+                      value={newSosLocation}
+                      onChange={(e) => setNewSosLocation(e.target.value)}
+                      className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2"
+                    >
+                      <option value="Dhaka">Dhaka</option>
+                      <option value="Sylhet">Sylhet</option>
+                      <option value="Sunamganj">Sunamganj</option>
+                      <option value="Dinajpur">Dinajpur</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Emergency Type</label>
+                    <select
+                      value={newSosType}
+                      onChange={(e) =>
+                        setNewSosType(
+                          e.target.value as
+                            | 'Flood Rescue'
+                            | 'Emergency Help'
+                            | 'Food Support'
+                            | 'Medical Aid'
+                        )
+                      }
+                      className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2"
+                    >
+                      <option value="Flood Rescue">Flood Rescue</option>
+                      <option value="Emergency Help">Emergency Help</option>
+                      <option value="Food Support">Food Support</option>
+                      <option value="Medical Aid">Medical Aid</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3 items-end">
+                  <div className="flex-1 w-full">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Emergency Situation Details
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Describe water depth, stranded persons, and nearest landmark..."
+                      value={newSosText}
+                      onChange={(e) => setNewSosText(e.target.value)}
+                      className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg cursor-pointer whitespace-nowrap"
+                  >
+                    Send SOS Request
+                  </button>
+                </div>
+              </form>
+
+              <section className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
+                <h2 className="text-base font-bold text-slate-900">
+                  Live Community SOS Emergency Feed ({sosMessages.length})
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                  {sosMessages.map((m) => (
+                    <div
+                      key={m.id}
+                      className="p-3.5 rounded-lg border border-slate-200 bg-slate-50/70 space-y-1"
+                    >
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-red-600">{m.emergencyType}</span>
+                        <span className="font-mono text-slate-500">{m.timestamp}</span>
+                      </div>
+                      <div className="text-xs font-bold text-slate-900">
+                        {m.senderName} ({m.senderPhone})
+                      </div>
+                      <div className="text-xs text-slate-600">
+                        {m.location} · Status: <strong>{m.status}</strong>
+                      </div>
+                      {m.assignedVolunteer && (
+                        <div className="text-[11px] text-[#159b83] font-semibold">
+                          Team: {m.assignedVolunteer}
+                        </div>
+                      )}
+                      <p className="text-xs text-slate-800 pt-1">{m.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              {/* Citizen Email Notification Preferences */}
+              {userEmailPrefs && (
+                <section className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-base font-bold text-[#123c69] flex items-center gap-2">
+                        <Mail className="w-4 h-4 text-[#159b83]" />
+                        <span>Email Notification Preferences</span>
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        Manage automated SOS status updates and district flood warning broadcasts sent to{' '}
+                        <span className="font-mono text-slate-700">{userEmailPrefs.email}</span>.
+                      </p>
+                    </div>
+                    <div className="text-xs font-semibold text-emerald-700">
+                      {userEmailPrefs.emailVerified ? 'Verified Email' : 'Unverified Email'}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Your District
+                      </label>
+                      <select
+                        value={userEmailPrefs.district}
+                        onChange={(e) =>
+                          setUserEmailPrefs({ ...userEmailPrefs, district: e.target.value })
+                        }
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white"
+                      >
+                        <option value="sylhet">Sylhet</option>
+                        <option value="dhaka">Dhaka</option>
+                        <option value="sunamganj">Sunamganj</option>
+                        <option value="dinajpur">Dinajpur</option>
+                      </select>
+                    </div>
+
+                    <label className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer">
+                      <span className="font-medium text-slate-800">SOS Status Update Emails</span>
+                      <input
+                        type="checkbox"
+                        checked={userEmailPrefs.statusUpdatesEnabled}
+                        onChange={(e) =>
+                          setUserEmailPrefs({
+                            ...userEmailPrefs,
+                            statusUpdatesEnabled: e.target.checked,
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer">
+                      <span className="font-medium text-slate-800">Emergency Flood Broadcasts</span>
+                      <input
+                        type="checkbox"
+                        checked={userEmailPrefs.broadcastsEnabled}
+                        onChange={(e) =>
+                          setUserEmailPrefs({
+                            ...userEmailPrefs,
+                            broadcastsEnabled: e.target.checked,
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      disabled={savingUserPrefs}
+                      onClick={() => handleSaveUserEmailPrefs(userEmailPrefs)}
+                      className="px-4 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-lg cursor-pointer"
+                    >
+                      {savingUserPrefs ? 'Saving...' : 'Save Notification Preferences'}
+                    </button>
+                  </div>
+                </section>
+              )}
+            </main>
+        ) : (
+          renderRoleLockGate('Citizen', 'user@floodguard.gov.bd')
+        ))}
+
       {/* TAB 3: FORECAST OFFICER DASHBOARD (Protected by Forecast Officer or Admin role) */}
       {activeTab === 'forecast' &&
         (hasRoleAccess('Forecast Officer') ? (
-          <div className="flex flex-1 min-h-[calc(100vh-57px)]">
-            <aside className="w-[230px] bg-[#123c69] text-white p-5 shrink-0 hidden md:block">
-              <h2 className="text-xl font-bold text-[#55d6be]">FloodGuard</h2>
-              <p className="text-xs text-slate-300 mt-1 mb-5">Forecast Officer</p>
-              <ul className="space-y-1 text-sm">
-                {[
-                  'Dashboard',
-                  'Environmental Data',
-                  'AI Predictions',
-                  'Upload Trained Model',
-                  'Validate Forecasts',
-                  'Publish Forecasts',
-                ].map((item) => (
-                  <li
-                    key={item}
-                    onClick={() => setForecastSubSection(item)}
-                    className={`py-3 px-2.5 border-b border-[#456789] cursor-pointer rounded-xs transition-colors ${
-                      forecastSubSection === item ? 'bg-[#245786] font-bold' : 'hover:bg-[#245786]'
-                    }`}
-                  >
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </aside>
-
-            <main className="flex-1 p-6 space-y-6 max-w-[1180px]">
+          <main className="w-full max-w-[1280px] mx-auto p-4 md:p-8 space-y-6">
               <div className="bg-white p-5 rounded-xl border border-slate-200">
                 <h1 className="text-2xl font-bold text-[#123c69]">Forecast Officer Dashboard</h1>
                 <p className="text-sm text-slate-600 mt-1">
@@ -1925,7 +3424,7 @@ export default function App() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => setActiveTab('monitor')}
+                      onClick={() => navigateToTab('monitor')}
                       className="px-4 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-md cursor-pointer"
                     >
                       View Data
@@ -1955,7 +3454,11 @@ export default function App() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => setForecastSubSection('Validate Forecasts')}
+                      onClick={() =>
+                        document
+                          .getElementById('forecast-validation-section')
+                          ?.scrollIntoView({ behavior: 'smooth' })
+                      }
                       className="px-4 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-md cursor-pointer"
                     >
                       Review Forecasts
@@ -1974,7 +3477,7 @@ export default function App() {
                 onRunGeminiForecast={handleRunGeminiForecast}
               />
 
-              <section>
+              <section id="forecast-validation-section">
                 <h2 className="text-lg font-bold text-slate-900 mb-3">Flood Forecast Validation</h2>
                 <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
                   <table className="w-full border-collapse text-left text-sm">
@@ -2061,7 +3564,6 @@ export default function App() {
                 </button>
               </div>
             </main>
-          </div>
         ) : (
           renderRoleLockGate('Forecast Officer', 'forecast@floodguard.gov.bd')
         ))}
@@ -2069,33 +3571,7 @@ export default function App() {
       {/* TAB 4: DISASTER MANAGEMENT DASHBOARD (Protected by Authority or Admin role) */}
       {activeTab === 'disaster' &&
         (hasRoleAccess('Authority') ? (
-          <div className="flex flex-1 min-h-[calc(100vh-57px)]">
-            <aside className="w-[230px] bg-[#123c69] text-white p-5 shrink-0 hidden md:block">
-              <h2 className="text-xl font-bold text-[#55d6be]">FloodGuard</h2>
-              <p className="text-xs text-slate-300 mt-1 mb-5">Disaster Management</p>
-              <ul className="space-y-1 text-sm">
-                {[
-                  'Dashboard',
-                  'Review Warnings',
-                  'Publish Warnings',
-                  'Update Warnings',
-                  'Emergency Monitoring',
-                  'Disaster Response',
-                ].map((item) => (
-                  <li
-                    key={item}
-                    onClick={() => setDisasterSubSection(item)}
-                    className={`py-3 px-2.5 border-b border-[#456789] cursor-pointer rounded-xs transition-colors ${
-                      disasterSubSection === item ? 'bg-[#245786] font-bold' : 'hover:bg-[#245786]'
-                    }`}
-                  >
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </aside>
-
-            <main className="flex-1 p-6 space-y-6 max-w-[1180px]">
+          <main className="w-full max-w-[1280px] mx-auto p-4 md:p-8 space-y-6">
               <div className="bg-white p-5 rounded-xl border border-slate-200">
                 <h1 className="text-2xl font-bold text-[#123c69]">Disaster Management Dashboard</h1>
                 <p className="text-sm text-slate-600 mt-1">
@@ -2113,7 +3589,11 @@ export default function App() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => setDisasterSubSection('Review Warnings')}
+                      onClick={() =>
+                        document
+                          .getElementById('warning-management-section')
+                          ?.scrollIntoView({ behavior: 'smooth' })
+                      }
                       className="px-4 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-md cursor-pointer"
                     >
                       Review Now
@@ -2127,7 +3607,11 @@ export default function App() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => setDisasterSubSection('Publish Warnings')}
+                      onClick={() =>
+                        document
+                          .getElementById('warning-control-section')
+                          ?.scrollIntoView({ behavior: 'smooth' })
+                      }
                       className="px-4 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-md cursor-pointer"
                     >
                       Publish
@@ -2141,7 +3625,7 @@ export default function App() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => setActiveTab('map')}
+                      onClick={() => navigateToTab('map')}
                       className="px-4 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-md cursor-pointer"
                     >
                       Monitor
@@ -2150,7 +3634,7 @@ export default function App() {
                 </div>
               </section>
 
-              <section>
+              <section id="warning-management-section">
                 <h2 className="text-lg font-bold text-slate-900 mb-3">Flood Warning Management</h2>
                 <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
                   <table className="w-full border-collapse text-left text-sm">
@@ -2220,6 +3704,7 @@ export default function App() {
               </section>
 
               <form
+                id="warning-control-section"
                 onSubmit={handleCreateWarning}
                 className="bg-white p-5 rounded-xl border border-slate-200 space-y-4"
               >
@@ -2279,46 +3764,41 @@ export default function App() {
                   </button>
                 </div>
               </form>
+
+              {sessionUser && (
+                <EmailNotificationsPanel
+                  sessionUser={sessionUser}
+                  currentUser={currentUser}
+                  shelters={shelters}
+                  sosRequests={sosRequests}
+                  initialSubTab="broadcast"
+                  externalRefreshTrigger={emailRefreshTrigger}
+                  showToast={showToast}
+                />
+              )}
             </main>
-          </div>
         ) : (
           renderRoleLockGate('Authority', 'disaster@floodguard.gov.bd')
         ))}
 
-      {/* TAB 5: VOLUNTEER & SOS DASHBOARD (Strictly requires Login & Registration; Volunteer/Admin or Registered Citizen for SOS) */}
+      {/* TAB 5: VOLUNTEER & SOS DASHBOARD (Protected by Volunteer or Admin role) */}
       {activeTab === 'volunteer' &&
-        (sessionUser && (hasRoleAccess('Volunteer') || sessionUser.role === 'Citizen') ? (
-          <div className="flex flex-1 min-h-[calc(100vh-57px)]">
-            <aside className="w-[230px] bg-[#123c69] text-white p-5 shrink-0 hidden md:block">
-              <h2 className="text-xl font-bold text-[#55d6be]">FloodGuard</h2>
-              <p className="text-xs text-slate-300 mt-1 mb-5">Volunteer &amp; SOS Panel</p>
-              <ul className="space-y-1 text-sm">
-                {[
-                  'Dashboard',
-                  'SOS Requests',
-                  'Rescue Coordination',
-                  'Shelter Information',
-                  'Emergency Status',
-                ].map((item) => (
-                  <li
-                    key={item}
-                    onClick={() => setVolunteerSubSection(item)}
-                    className={`py-3 px-2.5 border-b border-[#456789] cursor-pointer rounded-xs transition-colors ${
-                      volunteerSubSection === item ? 'bg-[#245786] font-bold' : 'hover:bg-[#245786]'
-                    }`}
-                  >
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </aside>
-
-            <main className="flex-1 p-6 space-y-6 max-w-[1180px]">
-              <div className="bg-white p-5 rounded-xl border border-slate-200">
-                <h1 className="text-2xl font-bold text-[#123c69]">Volunteer &amp; SOS Dashboard</h1>
-                <p className="text-sm text-slate-600 mt-1">
-                  Authenticated User: {sessionUser.firstName} {sessionUser.lastName} ({sessionUser.role}) · Live SOS Stream Active
-                </p>
+        (sessionUser && hasRoleAccess('Volunteer') ? (
+          <main className="w-full max-w-[1280px] mx-auto p-4 md:p-8 space-y-6">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h1 className="text-2xl font-bold text-[#123c69]">Volunteer &amp; SOS Dashboard</h1>
+                  <p className="text-sm text-slate-600 mt-1">
+                    Authenticated User: {sessionUser.firstName} {sessionUser.lastName} ({formatRoleDisplay(sessionUser.role)}) · Live SOS Stream Active
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigateToTab('shelter')}
+                  className="px-4 py-2 bg-[#123c69] hover:bg-[#245786] text-white text-xs font-semibold rounded-lg cursor-pointer self-start sm:self-auto"
+                >
+                  Open Shelter Finder
+                </button>
               </div>
 
               <section>
@@ -2343,9 +3823,17 @@ export default function App() {
                   <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-1.5">
                     <h3 className="text-base font-bold text-[#123c69]">Available Shelters</h3>
                     <div className="text-3xl font-bold text-slate-900 font-mono tabular-nums">
-                      {shelters.length}
+                      {shelters.filter((s) => s.status !== 'Full').length}{' '}
+                      <span className="text-base font-semibold text-slate-500">
+                        / {shelters.length}
+                      </span>
                     </div>
-                    <p className="text-xs text-slate-600">Available emergency shelters</p>
+                    <p className="text-xs text-slate-600">
+                      {shelters
+                        .reduce((sum, s) => sum + Math.max(0, s.capacity - s.occupancy), 0)
+                        .toLocaleString()}{' '}
+                      open spaces remaining
+                    </p>
                   </div>
                 </div>
               </section>
@@ -2478,57 +3966,98 @@ export default function App() {
                   <table className="w-full border-collapse text-left text-sm">
                     <thead>
                       <tr className="bg-[#123c69] text-white">
-                        <th className="p-3.5 border border-slate-200">Name</th>
+                        <th className="p-3.5 border border-slate-200">Citizen &amp; Contact</th>
                         <th className="p-3.5 border border-slate-200">Location</th>
                         <th className="p-3.5 border border-slate-200">Emergency</th>
-                        <th className="p-3.5 border border-slate-200">Status</th>
+                        <th className="p-3.5 border border-slate-200">Status &amp; Team</th>
                         <th className="p-3.5 border border-slate-200">Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {sosRequests.map((sos) => (
-                        <tr key={sos.id} className="hover:bg-slate-50">
-                          <td className="p-3.5 border border-slate-200 font-semibold">
-                            {sos.requesterName}
+                        <tr
+                          key={sos.id}
+                          className={`hover:bg-slate-50 ${
+                            sos.isCritical && sos.status !== 'Completed' ? 'bg-red-50/30' : ''
+                          }`}
+                        >
+                          <td className="p-3.5 border border-slate-200">
+                            <div className="font-semibold text-slate-900">{sos.requesterName}</div>
+                            {(sos.requesterPhone || sos.requesterEmail) && (
+                              <div className="text-[11px] font-mono text-slate-500">
+                                {sos.requesterPhone || ''}
+                                {sos.requesterPhone && sos.requesterEmail ? ' · ' : ''}
+                                {sos.requesterEmail || ''}
+                              </div>
+                            )}
                           </td>
-                          <td className="p-3.5 border border-slate-200">{sos.location}</td>
+                          <td className="p-3.5 border border-slate-200">
+                            <div>{sos.location}</div>
+                            {sos.submittedAt && (
+                              <div className="text-[11px] font-mono text-slate-500">
+                                {sos.submittedAt}
+                              </div>
+                            )}
+                          </td>
                           <td
                             className={`p-3.5 border border-slate-200 font-bold ${
+                              sos.isCritical ||
                               sos.emergencyType === 'Flood Rescue' ||
                               sos.emergencyType === 'Emergency Help'
                                 ? 'text-red-600'
                                 : 'text-slate-800'
                             }`}
                           >
-                            {sos.emergencyType}
+                            <div>{sos.emergencyType}</div>
+                            {sos.isCritical && (
+                              <div className="text-[11px] font-bold uppercase text-red-700">
+                                Critical Priority
+                              </div>
+                            )}
                           </td>
-                          <td className="p-3.5 border border-slate-200 font-medium">{sos.status}</td>
+                          <td className="p-3.5 border border-slate-200 font-medium">
+                            <div>{sos.status}</div>
+                            {sos.assignedVolunteer && (
+                              <div className="text-[11px] text-[#159b83] font-semibold">
+                                {sos.assignedVolunteer}
+                              </div>
+                            )}
+                          </td>
                           <td className="p-3.5 border border-slate-200">
                             {hasRoleAccess('Volunteer') ? (
-                              <>
+                              <div className="flex flex-wrap items-center gap-1.5">
                                 {sos.status === 'Pending' && (
                                   <button
                                     type="button"
-                                    onClick={() => handleUpdateSosStatus(sos, 'In Progress')}
-                                    className="px-3 py-1.5 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded cursor-pointer mr-2"
+                                    onClick={() => handleUpdateSosStatus(sos, 'Accepted')}
+                                    className="px-2.5 py-1.5 bg-[#123c69] hover:bg-[#245786] text-white text-xs font-semibold rounded cursor-pointer whitespace-nowrap"
                                   >
                                     Accept
+                                  </button>
+                                )}
+                                {(sos.status === 'Pending' || sos.status === 'Accepted') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateSosStatus(sos, 'In Progress')}
+                                    className="px-2.5 py-1.5 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded cursor-pointer whitespace-nowrap"
+                                  >
+                                    Start Rescue
                                   </button>
                                 )}
                                 {sos.status !== 'Completed' ? (
                                   <button
                                     type="button"
                                     onClick={() => handleUpdateSosStatus(sos, 'Completed')}
-                                    className="px-3 py-1.5 bg-[#3498db] hover:bg-blue-600 text-white text-xs font-semibold rounded cursor-pointer"
+                                    className="px-2.5 py-1.5 bg-[#3498db] hover:bg-blue-600 text-white text-xs font-semibold rounded cursor-pointer whitespace-nowrap"
                                   >
                                     Mark Done
                                   </button>
                                 ) : (
-                                  <span className="px-3 py-1.5 bg-[#3498db] text-white text-xs font-semibold rounded inline-block">
-                                    Done
+                                  <span className="px-2.5 py-1.5 bg-[#3498db] text-white text-xs font-semibold rounded inline-block">
+                                    Completed
                                   </span>
                                 )}
-                              </>
+                              </div>
                             ) : (
                               <span className="text-xs text-slate-500">Volunteer Action Only</span>
                             )}
@@ -2540,6 +4069,392 @@ export default function App() {
                 </div>
               </section>
 
+              {/* Shelter Finder Capacity Management (Live-synced with Shelter Finder) */}
+              <section
+                id="volunteer-shelter-capacity"
+                className="bg-white p-5 rounded-xl border border-slate-200 space-y-4"
+              >
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-[#123c69] flex items-center gap-2">
+                      <Building2 className="w-5 h-5 text-[#159b83]" />
+                      <span>Shelter Finder Capacity Management</span>
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Manage evacuee occupancy and maximum shelter capacity. Updates reflect immediately in Shelter Finder and User Dashboard.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      aria-label="Filter Shelters by District"
+                      value={volunteerShelterDistrict}
+                      onChange={(e) => setVolunteerShelterDistrict(e.target.value)}
+                      className="text-xs font-semibold border border-slate-300 rounded-lg px-3 py-2 bg-slate-50 text-slate-800"
+                    >
+                      <option value="all">All Districts ({shelters.length})</option>
+                      <option value="sylhet">Sylhet</option>
+                      <option value="dinajpur">Dinajpur</option>
+                      <option value="dhaka">Dhaka</option>
+                      <option value="sunamganj">Sunamganj</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddShelter((prev) => !prev)}
+                      className="px-3.5 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-lg cursor-pointer"
+                    >
+                      {showAddShelter ? 'Close Add Form' : '+ Add Shelter'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigateToTab('shelter')}
+                      className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg cursor-pointer"
+                    >
+                      View Shelter Finder →
+                    </button>
+                  </div>
+                </div>
+
+                {/* Summary Capacity Strip */}
+                {(() => {
+                  const filtered = shelters.filter(
+                    (s) =>
+                      volunteerShelterDistrict === 'all' || s.district === volunteerShelterDistrict
+                  );
+                  const totalCap = filtered.reduce((sum, s) => sum + s.capacity, 0);
+                  const totalOcc = filtered.reduce((sum, s) => sum + s.occupancy, 0);
+                  const remaining = Math.max(0, totalCap - totalOcc);
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200">
+                        <span className="text-[11px] font-semibold text-slate-500">
+                          Total Shelter Capacity
+                        </span>
+                        <div className="text-xl font-bold text-slate-900 font-mono tabular-nums mt-0.5">
+                          {totalCap.toLocaleString()} persons
+                        </div>
+                      </div>
+                      <div className="p-3.5 rounded-lg bg-blue-50/70 border border-blue-200/70">
+                        <span className="text-[11px] font-semibold text-blue-700">
+                          Current Evacuee Occupancy
+                        </span>
+                        <div className="text-xl font-bold text-blue-900 font-mono tabular-nums mt-0.5">
+                          {totalOcc.toLocaleString()} persons
+                        </div>
+                      </div>
+                      <div className="p-3.5 rounded-lg bg-emerald-50/70 border border-emerald-200/70">
+                        <span className="text-[11px] font-semibold text-emerald-700">
+                          Remaining Free Spaces
+                        </span>
+                        <div className="text-xl font-bold text-emerald-900 font-mono tabular-nums mt-0.5">
+                          {remaining.toLocaleString()} spots
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Optional Add New Shelter Form */}
+                {showAddShelter && (
+                  <form
+                    onSubmit={handleCreateShelter}
+                    className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3"
+                  >
+                    <h3 className="text-sm font-bold text-[#123c69]">
+                      Register New Flood Shelter
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Shelter Name
+                        </label>
+                        <input
+                          type="text"
+                          value={newShelterName}
+                          onChange={(e) => setNewShelterName(e.target.value)}
+                          placeholder="e.g., Sylhet Central Relief Center"
+                          required
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          District
+                        </label>
+                        <select
+                          value={newShelterDistrict}
+                          onChange={(e) =>
+                            setNewShelterDistrict(
+                              e.target.value as 'sylhet' | 'dinajpur' | 'dhaka' | 'sunamganj'
+                            )
+                          }
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white"
+                        >
+                          <option value="sylhet">Sylhet</option>
+                          <option value="dinajpur">Dinajpur</option>
+                          <option value="dhaka">Dhaka</option>
+                          <option value="sunamganj">Sunamganj</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Area / Upazila
+                        </label>
+                        <input
+                          type="text"
+                          value={newShelterArea}
+                          onChange={(e) => setNewShelterArea(e.target.value)}
+                          placeholder="companiganj"
+                          required
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Max Capacity
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="50000"
+                          value={newShelterCapacity}
+                          onChange={(e) => setNewShelterCapacity(e.target.value)}
+                          required
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Initial Occupancy
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="50000"
+                          value={newShelterOccupancy}
+                          onChange={(e) => setNewShelterOccupancy(e.target.value)}
+                          required
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <label className="text-[11px] font-semibold text-slate-700">
+                          Elevation (m):
+                        </label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="5000"
+                          value={newShelterElevation}
+                          onChange={(e) => setNewShelterElevation(e.target.value)}
+                          className="w-24 text-xs border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white font-mono"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        className="px-4 py-2 bg-[#123c69] hover:bg-[#245786] text-white text-xs font-semibold rounded-lg cursor-pointer"
+                      >
+                        Save New Shelter
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Shelter Capacity Table */}
+                <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="bg-[#123c69] text-white">
+                        <th className="p-3 border-b border-slate-200">Shelter &amp; Area</th>
+                        <th className="p-3 border-b border-slate-200">Live Occupancy</th>
+                        <th className="p-3 border-b border-slate-200">Edit Occupancy / Capacity</th>
+                        <th className="p-3 border-b border-slate-200">Status</th>
+                        <th className="p-3 border-b border-slate-200">Quick Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {shelters
+                        .filter(
+                          (s) =>
+                            volunteerShelterDistrict === 'all' ||
+                            s.district === volunteerShelterDistrict
+                        )
+                        .map((sh) => {
+                          const draft = shelterDrafts[sh.id] || {
+                            capacity: String(sh.capacity),
+                            occupancy: String(sh.occupancy),
+                          };
+                          const pct = Math.min(
+                            100,
+                            Math.round((sh.occupancy / Math.max(1, sh.capacity)) * 100)
+                          );
+                          const freeSpots = Math.max(0, sh.capacity - sh.occupancy);
+                          return (
+                            <tr key={sh.id} className="hover:bg-slate-50 border-b border-slate-100">
+                              <td className="p-3">
+                                <div className="font-bold text-slate-900">{sh.name}</div>
+                                <div className="text-[11px] text-slate-500 capitalize">
+                                  {sh.area}, {sh.district} · Elev: {sh.elevation}m
+                                </div>
+                              </td>
+                              <td className="p-3 min-w-[165px]">
+                                <div className="flex items-center justify-between font-mono font-semibold text-slate-800 mb-1">
+                                  <span>
+                                    {sh.occupancy} / {sh.capacity}
+                                  </span>
+                                  <span className="text-[11px] text-slate-500">
+                                    {freeSpots} free ({pct}%)
+                                  </span>
+                                </div>
+                                <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+                                  <div
+                                    className={`h-full transition-all ${
+                                      sh.status === 'Full'
+                                        ? 'bg-red-500'
+                                        : sh.status === 'Near Capacity'
+                                        ? 'bg-amber-500'
+                                        : 'bg-emerald-500'
+                                    }`}
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                              </td>
+                              <td className="p-3">
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    aria-label={`Occupancy for ${sh.name}`}
+                                    min="0"
+                                    max="50000"
+                                    value={draft.occupancy}
+                                    onChange={(e) =>
+                                      setShelterDrafts((prev) => ({
+                                        ...prev,
+                                        [sh.id]: {
+                                          capacity: draft.capacity,
+                                          occupancy: e.target.value,
+                                        },
+                                      }))
+                                    }
+                                    className="w-20 px-2 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
+                                  />
+                                  <span className="text-slate-400 font-bold">/</span>
+                                  <input
+                                    type="number"
+                                    aria-label={`Max capacity for ${sh.name}`}
+                                    min="1"
+                                    max="50000"
+                                    value={draft.capacity}
+                                    onChange={(e) =>
+                                      setShelterDrafts((prev) => ({
+                                        ...prev,
+                                        [sh.id]: {
+                                          capacity: e.target.value,
+                                          occupancy: draft.occupancy,
+                                        },
+                                      }))
+                                    }
+                                    className="w-20 px-2 py-1.5 border border-slate-300 rounded font-mono text-xs bg-white"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleUpdateShelterCapacity(
+                                        sh,
+                                        Number(draft.capacity),
+                                        Number(draft.occupancy)
+                                      )
+                                    }
+                                    className="px-2.5 py-1.5 bg-[#123c69] hover:bg-[#245786] text-white font-semibold rounded cursor-pointer"
+                                  >
+                                    Save
+                                  </button>
+                                </div>
+                              </td>
+                              <td className="p-3 font-bold">
+                                <span
+                                  className={
+                                    sh.status === 'Available'
+                                      ? 'text-emerald-600'
+                                      : sh.status === 'Near Capacity'
+                                      ? 'text-amber-600'
+                                      : 'text-red-600'
+                                  }
+                                >
+                                  {sh.status}
+                                </span>
+                              </td>
+                              <td className="p-3">
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleUpdateShelterCapacity(
+                                        sh,
+                                        sh.capacity,
+                                        Math.max(0, sh.occupancy - 10),
+                                        `Checked out -10 evacuees from ${sh.name}.`
+                                      )
+                                    }
+                                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded cursor-pointer"
+                                  >
+                                    -10
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleUpdateShelterCapacity(
+                                        sh,
+                                        sh.capacity,
+                                        Math.min(sh.capacity, sh.occupancy + 10),
+                                        `Checked in +10 evacuees at ${sh.name}.`
+                                      )
+                                    }
+                                    className="px-2.5 py-1.5 bg-[#159b83] hover:bg-[#087c68] text-white font-semibold rounded cursor-pointer"
+                                  >
+                                    +10
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {shelterBookings.length > 0 && (
+                  <div className="pt-3 border-t border-slate-200 space-y-2">
+                    <h3 className="text-xs font-bold text-[#123c69]">
+                      Recent User Shelter Bookings ({shelterBookings.length})
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                      {shelterBookings.slice(0, 6).map((bk) => (
+                        <div
+                          key={bk.id}
+                          className="p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs flex items-center justify-between gap-2"
+                        >
+                          <div>
+                            <div className="font-bold text-slate-900">{bk.shelterName}</div>
+                            <div className="text-slate-600">
+                              {bk.bookerName} · <strong>{bk.persons} persons</strong>
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-mono">
+                              {bk.bookerPhone || ''} · {bk.timestamp}
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold text-[11px]">
+                            {bk.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-2">
                   <h3 className="text-base font-bold text-[#123c69]">Rescue Activities</h3>
@@ -2548,7 +4463,7 @@ export default function App() {
                   </p>
                   <button
                     type="button"
-                    onClick={() => setActiveTab('map')}
+                    onClick={() => navigateToTab('map')}
                     className="px-4 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-md cursor-pointer"
                   >
                     Manage Rescue on GIS Map
@@ -2582,8 +4497,18 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              {/* Email & Emergency Notifications Management Section */}
+              <EmailNotificationsPanel
+                sessionUser={sessionUser}
+                currentUser={currentUser}
+                shelters={shelters}
+                sosRequests={sosRequests}
+                initialSubTab="history"
+                externalRefreshTrigger={emailRefreshTrigger}
+                showToast={showToast}
+              />
             </main>
-          </div>
         ) : (
           renderRoleLockGate('Volunteer', 'volunteer@floodguard.gov.bd')
         ))}
@@ -2592,13 +4517,26 @@ export default function App() {
       {activeTab === 'shelter' && (
         <main className="w-full max-w-[1100px] mx-auto p-6 md:p-8 space-y-6">
           <div className="bg-white rounded-xl p-6 border border-slate-200 dashboard-card">
-            <h1 className="text-2xl font-bold text-[#0d6efd] flex items-center gap-2">
-              <MapPin className="w-6 h-6" />
-              <span>Flood Shelter Finder</span>
-            </h1>
-            <p className="text-xs text-slate-600 mt-1">
-              Select your district and upazila/area to locate verified high-elevation flood shelters and live capacity.
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-bold text-[#0d6efd] flex items-center gap-2">
+                  <MapPin className="w-6 h-6" />
+                  <span>Flood Shelter Finder</span>
+                </h1>
+                <p className="text-xs text-slate-600 mt-1">
+                  Select your district and upazila/area to locate verified high-elevation flood shelters and live capacity.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  navigateToTab(sessionUser ? getDashboardTabForRole(sessionUser.role) : 'monitor')
+                }
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg cursor-pointer whitespace-nowrap self-start"
+              >
+                ← Back to {sessionUser ? 'Dashboard' : 'Monitor'}
+              </button>
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-5">
               <div>
@@ -2618,6 +4556,8 @@ export default function App() {
                 >
                   <option value="sylhet">Sylhet</option>
                   <option value="dinajpur">Dinajpur</option>
+                  <option value="dhaka">Dhaka</option>
+                  <option value="sunamganj">Sunamganj</option>
                 </select>
               </div>
 
@@ -2647,6 +4587,16 @@ export default function App() {
                       />
                       <span>Jaintapur</span>
                     </label>
+                    <label className="inline-flex items-center gap-2 text-sm font-medium cursor-pointer">
+                      <input
+                        type="radio"
+                        name="area"
+                        checked={selectedArea === 'all'}
+                        onChange={() => setSelectedArea('all')}
+                        className="text-[#0d6efd]"
+                      />
+                      <span>All Areas</span>
+                    </label>
                   </div>
                 )}
 
@@ -2672,7 +4622,23 @@ export default function App() {
                       />
                       <span>Birampur</span>
                     </label>
+                    <label className="inline-flex items-center gap-2 text-sm font-medium cursor-pointer">
+                      <input
+                        type="radio"
+                        name="area"
+                        checked={selectedArea === 'all'}
+                        onChange={() => setSelectedArea('all')}
+                        className="text-[#0d6efd]"
+                      />
+                      <span>All Areas</span>
+                    </label>
                   </div>
+                )}
+
+                {(selectedDistrict === 'dhaka' || selectedDistrict === 'sunamganj') && (
+                  <p className="text-xs text-slate-500 pt-2">
+                    Showing all registered shelters in <span className="capitalize font-semibold">{selectedDistrict}</span>.
+                  </p>
                 )}
               </div>
             </div>
@@ -2717,41 +4683,81 @@ export default function App() {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const nextOcc = Math.min(sh.capacity, sh.occupancy + 10);
-                      const nextStatus: ShelterItem['status'] =
-                        nextOcc >= sh.capacity
-                          ? 'Full'
-                          : nextOcc >= sh.capacity * 0.85
-                          ? 'Near Capacity'
-                          : 'Available';
-                      if (currentUser && sh.ownerId === currentUser.uid) {
-                        try {
-                          await updateDoc(doc(db, 'shelters', sh.id), {
-                            occupancy: nextOcc,
-                            status: nextStatus,
-                            updatedAt: serverTimestamp(),
-                          });
-                        } catch (err) {
-                          handleFirestoreError(err, OperationType.UPDATE, `shelters/${sh.id}`);
-                        }
-                      } else {
-                        setShelters((prev) =>
-                          prev.map((item) =>
-                            item.id === sh.id
-                              ? { ...item, occupancy: nextOcc, status: nextStatus }
-                              : item
+                  <div className="space-y-2.5">
+                    {sessionUser ? (
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700">
+                          <span>Book Shelter (Min 2 – Max 5 Persons)</span>
+                          <span className="text-emerald-700 font-mono">
+                            {Math.max(0, sh.capacity - sh.occupancy)} free
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <select
+                            aria-label={`Select persons to book at ${sh.name}`}
+                            value={bookingPersonsByShelter[sh.id] ?? 2}
+                            onChange={(e) =>
+                              setBookingPersonsByShelter((prev) => ({
+                                ...prev,
+                                [sh.id]: Number(e.target.value),
+                              }))
+                            }
+                            disabled={sh.capacity - sh.occupancy < 2}
+                            className="flex-1 text-xs border border-slate-300 rounded-lg px-2.5 py-2 bg-white font-semibold"
+                          >
+                            <option value={2}>2 Persons</option>
+                            <option value={3}>3 Persons</option>
+                            <option value={4}>4 Persons</option>
+                            <option value={5}>5 Persons</option>
+                          </select>
+                          <button
+                            type="button"
+                            disabled={sh.capacity - sh.occupancy < 2}
+                            onClick={() =>
+                              handleBookShelter(sh, bookingPersonsByShelter[sh.id] ?? 2)
+                            }
+                            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
+                              sh.capacity - sh.occupancy >= 2
+                                ? 'bg-[#159b83] hover:bg-[#087c68] text-white cursor-pointer'
+                                : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                            }`}
+                          >
+                            {sh.capacity - sh.occupancy >= 2 ? 'Book Shelter' : 'Full'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLoginRole('Citizen');
+                          setAuthMode('login');
+                          showToast('Sign in as a User to book shelter space (2–5 persons).');
+                          navigateToTab('auth');
+                        }}
+                        className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                      >
+                        Login as User to Book (2–5 Persons) · {Math.max(0, sh.capacity - sh.occupancy)} free
+                      </button>
+                    )}
+
+                    {hasRoleAccess('Volunteer') && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleUpdateShelterCapacity(
+                            sh,
+                            sh.capacity,
+                            Math.min(sh.capacity, sh.occupancy + 10),
+                            `Checked in +10 evacuees at ${sh.name}.`
                           )
-                        );
-                      }
-                      showToast(`Checked in +10 evacuees at ${sh.name}.`);
-                    }}
-                    className="w-full py-2 bg-[#0d6efd] hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-                  >
-                    Check-In Evacuees (+10)
-                  </button>
+                        }
+                        className="w-full py-2 bg-[#0d6efd] hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                      >
+                        Check-In Evacuees (+10)
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
           </div>
@@ -2761,36 +4767,9 @@ export default function App() {
       {/* TAB 7: ADMIN DASHBOARD (Strictly Protected by Admin Password) */}
       {activeTab === 'admin' &&
         (hasRoleAccess('Admin') ? (
-          <div className="flex flex-1 min-h-[calc(100vh-57px)]">
-            <aside className="w-[230px] bg-[#123c69] text-white p-5 shrink-0 hidden md:block">
-              <h2 className="text-xl font-bold text-[#55d6be]">FloodGuard</h2>
-              <p className="text-xs text-slate-300 mt-1 mb-5">Admin Panel</p>
-              <ul className="space-y-1 text-sm">
-                {[
-                  'Dashboard',
-                  'Manage Users',
-                  'Manage Roles',
-                  'Environmental Data',
-                  'System Monitoring',
-                  'Reports',
-                  'System Settings',
-                ].map((item) => (
-                  <li
-                    key={item}
-                    onClick={() => setAdminSubSection(item)}
-                    className={`py-3 px-2.5 border-b border-[#456789] cursor-pointer rounded-xs transition-colors ${
-                      adminSubSection === item ? 'bg-[#245786] font-bold' : 'hover:bg-[#245786]'
-                    }`}
-                  >
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </aside>
-
-            <main className="flex-1 p-6 space-y-6 max-w-[1180px]">
+          <main className="w-full max-w-[1280px] mx-auto p-4 md:p-8 space-y-6">
               <div className="bg-white p-5 rounded-xl border border-slate-200">
-                <h1 className="text-2xl font-bold text-[#123c69]">Admin Dashboard</h1>
+                <h1 className="text-2xl font-bold text-[#123c69]">Admin Control Panel</h1>
                 <p className="text-sm text-slate-600 mt-1">
                   AI-Based Flood Forecasting and Early Warning System · Authenticated Admin: {sessionUser?.email}
                 </p>
@@ -2835,26 +4814,132 @@ export default function App() {
                 </div>
               </section>
 
-              <section>
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-lg font-bold text-slate-900">User Management</h2>
+              <section className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-900">User &amp; Role Management</h2>
+                    <p className="text-xs text-slate-500">
+                      Only authorized Admins can create Admin accounts or reassign user roles.
+                    </p>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setAuthMode('register');
-                      setActiveTab('auth');
-                    }}
-                    className="px-3.5 py-1.5 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-md cursor-pointer"
+                    onClick={() => setShowAdminCreateUser((prev) => !prev)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#159b83] hover:bg-[#087c68] text-white text-xs font-semibold rounded-md cursor-pointer self-start"
                   >
-                    + Register New User
+                    <UserPlus className="w-4 h-4" />
+                    <span>{showAdminCreateUser ? 'Close Create Form' : '+ Create User / Assign Role'}</span>
                   </button>
                 </div>
+
+                {showAdminCreateUser && (
+                  <form
+                    onSubmit={handleAdminCreateUser}
+                    className="bg-white p-5 rounded-xl border border-slate-200 space-y-3"
+                  >
+                    <h3 className="text-sm font-bold text-[#123c69]">
+                      Create Staff or Admin Account (Admin-Only Provisioning)
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">First Name</label>
+                        <input
+                          type="text"
+                          value={adminNewFirstName}
+                          onChange={(e) => setAdminNewFirstName(e.target.value)}
+                          required
+                          placeholder="First name"
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Last Name</label>
+                        <input
+                          type="text"
+                          value={adminNewLastName}
+                          onChange={(e) => setAdminNewLastName(e.target.value)}
+                          required
+                          placeholder="Last name"
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Role</label>
+                        <select
+                          value={adminNewRole}
+                          onChange={(e) => setAdminNewRole(e.target.value as StaffAuthRole)}
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white font-semibold"
+                        >
+                          <option value="Citizen">User (General Public)</option>
+                          <option value="Forecast Officer">Forecast Officer</option>
+                          <option value="Authority">Disaster Management</option>
+                          <option value="Volunteer">Volunteer &amp; SOS</option>
+                          <option value="Admin">Admin</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Email</label>
+                        <input
+                          type="email"
+                          value={adminNewEmail}
+                          onChange={(e) => setAdminNewEmail(e.target.value)}
+                          required
+                          placeholder="user@floodguard.gov.bd"
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Phone</label>
+                        <input
+                          type="text"
+                          value={adminNewPhone}
+                          onChange={(e) => setAdminNewPhone(e.target.value)}
+                          required
+                          placeholder="01711000000"
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
+                          Password (min 6 chars)
+                        </label>
+                        <input
+                          type="password"
+                          value={adminNewPassword}
+                          onChange={(e) => setAdminNewPassword(e.target.value)}
+                          required
+                          minLength={6}
+                          placeholder="Set password"
+                          className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowAdminCreateUser(false)}
+                        className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-md cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-4 py-2 bg-[#123c69] hover:bg-[#245786] text-white text-xs font-semibold rounded-md cursor-pointer"
+                      >
+                        Create Account
+                      </button>
+                    </div>
+                  </form>
+                )}
+
                 <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
                   <table className="w-full border-collapse text-left text-sm">
                     <thead>
                       <tr className="bg-[#123c69] text-white">
-                        <th className="p-3.5 border border-slate-200">User Name</th>
-                        <th className="p-3.5 border border-slate-200">Role</th>
+                        <th className="p-3.5 border border-slate-200">User</th>
+                        <th className="p-3.5 border border-slate-200">Assigned Role</th>
                         <th className="p-3.5 border border-slate-200">Status</th>
                         <th className="p-3.5 border border-slate-200">Action</th>
                       </tr>
@@ -2862,10 +4947,30 @@ export default function App() {
                     <tbody>
                       {managedUsers.map((u) => (
                         <tr key={u.id} className="hover:bg-slate-50">
-                          <td className="p-3.5 border border-slate-200 font-semibold">
-                            {u.firstName} {u.lastName}
+                          <td className="p-3.5 border border-slate-200">
+                            <div className="font-semibold text-slate-900">
+                              {u.firstName} {u.lastName}
+                            </div>
+                            {u.email && (
+                              <div className="text-xs text-slate-500 font-mono">{u.email}</div>
+                            )}
                           </td>
-                          <td className="p-3.5 border border-slate-200">{u.displayRole}</td>
+                          <td className="p-3.5 border border-slate-200">
+                            <select
+                              aria-label={`Assign role for ${u.firstName} ${u.lastName}`}
+                              value={u.displayRole}
+                              onChange={(e) =>
+                                handleAdminChangeRole(u, e.target.value as StaffAuthRole)
+                              }
+                              className="text-xs font-semibold text-slate-800 bg-slate-50 border border-slate-300 rounded-md px-2.5 py-1.5"
+                            >
+                              <option value="Citizen">User (General Public)</option>
+                              <option value="Forecast Officer">Forecast Officer</option>
+                              <option value="Authority">Disaster Management</option>
+                              <option value="Volunteer">Volunteer &amp; SOS</option>
+                              <option value="Admin">Admin</option>
+                            </select>
+                          </td>
                           <td
                             className={`p-3.5 border border-slate-200 font-semibold ${
                               u.status === 'Active' ? 'text-emerald-600' : 'text-red-600'
@@ -2897,13 +5002,24 @@ export default function App() {
                   </table>
                 </div>
               </section>
+
+              {sessionUser && (
+                <EmailNotificationsPanel
+                  sessionUser={sessionUser}
+                  currentUser={currentUser}
+                  shelters={shelters}
+                  sosRequests={sosRequests}
+                  initialSubTab="templates"
+                  externalRefreshTrigger={emailRefreshTrigger}
+                  showToast={showToast}
+                />
+              )}
             </main>
-          </div>
         ) : (
           renderRoleLockGate('Admin', 'admin@floodguard.gov.bd')
         ))}
 
-      {/* TAB 8: LOGIN & REGISTRATION (lg_3669f2ee.html & reg_d9814b67.html + Role Credentials) */}
+      {/* TAB 8: ROLE-BASED LOGIN & REGISTRATION */}
       {activeTab === 'auth' && (
         <main
           className="flex-1 flex flex-col lg:flex-row items-center justify-center gap-8 p-6 bg-cover bg-center"
@@ -2911,12 +5027,19 @@ export default function App() {
             backgroundImage: `linear-gradient(rgba(18, 60, 105, 0.85), rgba(15, 23, 42, 0.90)), url('/assets/aistudio/image_c4ee044f.png')`,
           }}
         >
-          {/* Left: Login & Registration Form Card */}
+          {/* Left: Unified Role-Based Login & Registration Form Card */}
           <div className="w-full max-w-md bg-white rounded-2xl p-7 shadow-xl border border-slate-200 space-y-5">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <h1 className="text-2xl font-bold text-[#123c69]">
-                {authMode === 'login' ? 'FloodGuard Login' : 'User Registration'}
-              </h1>
+              <div>
+                <h1 className="text-2xl font-bold text-[#123c69]">
+                  {authMode === 'login' ? 'FloodGuard Login' : 'User Registration'}
+                </h1>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {authMode === 'login'
+                    ? 'Select your assigned role to access your dashboard'
+                    : 'Register a User (General Public) account'}
+                </p>
+              </div>
               <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
                 <button
                   type="button"
@@ -2940,41 +5063,74 @@ export default function App() {
                     authMode === 'register' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
                   }`}
                 >
-                  Registration
+                  Register
                 </button>
               </div>
             </div>
 
             {authErrorMessage && (
-              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-semibold">
+              <div
+                role="alert"
+                className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-semibold"
+              >
                 {authErrorMessage}
               </div>
             )}
 
             {authMode === 'login' ? (
-              <form onSubmit={handleLoginSubmit} className="space-y-3.5">
+              <form onSubmit={(e) => handleLoginSubmit(e)} className="space-y-3.5">
+                <div>
+                  <label
+                    htmlFor="login-role-select"
+                    className="block text-xs font-bold text-slate-700 mb-1"
+                  >
+                    Select Assigned Role
+                  </label>
+                  <div className="relative">
+                    <select
+                      id="login-role-select"
+                      value={loginRole}
+                      onChange={(e) => {
+                        setLoginRole(e.target.value as StaffAuthRole);
+                        setAuthErrorMessage(null);
+                      }}
+                      className="w-full appearance-none px-3.5 py-2.5 pr-10 border-2 border-[#123c69]/30 focus:border-[#159b83] rounded-lg text-sm font-semibold text-slate-800 bg-slate-50 focus:bg-white outline-none transition-colors cursor-pointer"
+                    >
+                      <option value="Citizen">User (General Public)</option>
+                      <option value="Forecast Officer">Forecast Officer</option>
+                      <option value="Authority">Disaster Management</option>
+                      <option value="Volunteer">Volunteer &amp; SOS</option>
+                      <option value="Admin">Admin</option>
+                    </select>
+                    <ChevronDown className="w-4 h-4 text-slate-500 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Email</label>
                   <input
                     type="email"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="Enter your Email"
+                    placeholder="Enter your account email"
                     required
-                    className="w-full px-3.5 py-2.5 border-2 border-[#3498db] focus:border-[#2ecc71] rounded-lg text-sm outline-none"
+                    className="w-full px-3.5 py-2.5 border border-slate-300 focus:border-[#159b83] rounded-lg text-sm outline-none"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Phone</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Phone <span className="font-normal text-slate-400">(optional)</span>
+                  </label>
                   <input
                     type="text"
                     value={loginPhone}
                     onChange={(e) => setLoginPhone(e.target.value)}
-                    placeholder="Enter your phone"
-                    required
-                    className="w-full px-3.5 py-2.5 border-2 border-[#3498db] focus:border-[#2ecc71] rounded-lg text-sm outline-none font-mono"
+                    placeholder="01711000000"
+                    className="w-full px-3.5 py-2.5 border border-slate-300 focus:border-[#159b83] rounded-lg text-sm outline-none font-mono"
                   />
                 </div>
+
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Password</label>
                   <input
@@ -2983,14 +5139,15 @@ export default function App() {
                     onChange={(e) => setLoginPassword(e.target.value)}
                     placeholder="Enter password"
                     required
-                    className="w-full px-3.5 py-2.5 border-2 border-[#3498db] focus:border-[#2ecc71] rounded-lg text-sm outline-none font-mono"
+                    className="w-full px-3.5 py-2.5 border border-slate-300 focus:border-[#159b83] rounded-lg text-sm outline-none font-mono"
                   />
                 </div>
+
                 <button
                   type="submit"
-                  className="w-full py-2.5 bg-[#3498db] hover:bg-blue-600 text-white font-bold text-sm rounded-lg transition-colors cursor-pointer"
+                  className="w-full py-2.5 bg-[#123c69] hover:bg-[#245786] text-white font-bold text-sm rounded-lg transition-colors cursor-pointer"
                 >
-                  Login &amp; Unlock SOS Messages
+                  Sign In to Dashboard
                 </button>
               </form>
             ) : (
@@ -2998,7 +5155,7 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      First name:
+                      First Name
                     </label>
                     <input
                       type="text"
@@ -3006,12 +5163,12 @@ export default function App() {
                       value={regFirstName}
                       onChange={(e) => setRegFirstName(e.target.value)}
                       required
-                      className="w-full px-3 py-2 border-2 border-[#3498db] rounded-lg text-sm outline-none"
+                      className="w-full px-3 py-2 border border-slate-300 focus:border-[#159b83] rounded-lg text-sm outline-none"
                     />
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Last Name:
+                      Last Name
                     </label>
                     <input
                       type="text"
@@ -3019,65 +5176,74 @@ export default function App() {
                       value={regLastName}
                       onChange={(e) => setRegLastName(e.target.value)}
                       required
-                      className="w-full px-3 py-2 border-2 border-[#3498db] rounded-lg text-sm outline-none"
+                      className="w-full px-3 py-2 border border-slate-300 focus:border-[#159b83] rounded-lg text-sm outline-none"
                     />
                   </div>
                 </div>
+
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Email</label>
                   <input
                     type="email"
-                    placeholder="Enter your Email"
+                    placeholder="Enter your email"
                     value={regEmail}
                     onChange={(e) => setRegEmail(e.target.value)}
                     required
-                    className="w-full px-3 py-2 border-2 border-[#3498db] rounded-lg text-sm outline-none"
+                    className="w-full px-3 py-2 border border-slate-300 focus:border-[#159b83] rounded-lg text-sm outline-none"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Phone:</label>
-                    <input
-                      type="text"
-                      placeholder="Enter your phone"
-                      value={regPhone}
-                      onChange={(e) => setRegPhone(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 border-2 border-[#3498db] rounded-lg text-sm outline-none font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Role:</label>
-                    <select
-                      value={regRole}
-                      onChange={(e) => setRegRole(e.target.value as UserRole)}
-                      className="w-full px-3 py-2 border-2 border-[#3498db] rounded-lg text-sm outline-none bg-white"
-                    >
-                      <option value="Citizen">Citizen</option>
-                      <option value="Volunteer">Volunteer</option>
-                      <option value="Forecast Officer">Forecast Officer</option>
-                      <option value="Authority">Authority (Disaster Mgmt)</option>
-                      <option value="Admin">Admin</option>
-                    </select>
-                  </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Phone</label>
+                  <input
+                    type="text"
+                    placeholder="017XXXXXXXX"
+                    value={regPhone}
+                    onChange={(e) => setRegPhone(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 focus:border-[#159b83] rounded-lg text-sm outline-none font-mono"
+                  />
                 </div>
+
+                <div>
+                  <label
+                    htmlFor="register-role-select"
+                    className="block text-xs font-bold text-slate-700 mb-1"
+                  >
+                    Account Role
+                  </label>
+                  <select
+                    id="register-role-select"
+                    value={regRole}
+                    disabled
+                    aria-readonly="true"
+                    className="w-full px-3.5 py-2 border-2 border-slate-200 rounded-lg text-sm font-semibold text-slate-700 bg-slate-100 cursor-not-allowed outline-none"
+                  >
+                    <option value="Citizen">User (General Public)</option>
+                  </select>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Public registration is allowed for User (General Public) accounts only. Staff and Admin roles can only be created or assigned by an authorized administrator.
+                  </p>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Set password:
+                      Password
                     </label>
                     <input
                       type="password"
-                      placeholder="Set password"
+                      placeholder="Min 6 characters"
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
                       required
-                      className="w-full px-3 py-2 border-2 border-[#3498db] rounded-lg text-sm outline-none font-mono"
+                      minLength={6}
+                      className="w-full px-3 py-2 border border-slate-300 focus:border-[#159b83] rounded-lg text-sm outline-none font-mono"
                     />
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Confirm password:
+                      Confirm Password
                     </label>
                     <input
                       type="password"
@@ -3085,32 +5251,17 @@ export default function App() {
                       value={regConfirmPassword}
                       onChange={(e) => setRegConfirmPassword(e.target.value)}
                       required
-                      className="w-full px-3 py-2 border-2 border-[#3498db] rounded-lg text-sm outline-none font-mono"
+                      minLength={6}
+                      className="w-full px-3 py-2 border border-slate-300 focus:border-[#159b83] rounded-lg text-sm outline-none font-mono"
                     />
                   </div>
                 </div>
 
-                {regRole !== 'Citizen' && (
-                  <div>
-                    <label className="block text-xs font-bold text-amber-800 mb-1">
-                      {regRole} Authorization Password (Required for Staff Roles):
-                    </label>
-                    <input
-                      type="password"
-                      placeholder={`Enter ${regRole} security key`}
-                      value={regRolePasscode}
-                      onChange={(e) => setRegRolePasscode(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 border-2 border-amber-400 rounded-lg text-sm outline-none font-mono"
-                    />
-                  </div>
-                )}
-
                 <button
                   type="submit"
-                  className="w-full py-2.5 bg-[#3498db] hover:bg-blue-600 text-white font-bold text-sm rounded-lg transition-colors cursor-pointer"
+                  className="w-full py-2.5 bg-[#159b83] hover:bg-[#087c68] text-white font-bold text-sm rounded-lg transition-colors cursor-pointer"
                 >
-                  Submit Registration &amp; Receive SOS Alerts
+                  Create Account &amp; Open Dashboard
                 </button>
               </form>
             )}
@@ -3150,7 +5301,7 @@ export default function App() {
                   Authorized Role Login Credentials
                 </h2>
                 <p className="text-xs text-slate-300">
-                  Click any role below to auto-fill login credentials, or enter them manually
+                  Select a role or click Fill Login to test backend-verified role redirection
                 </p>
               </div>
             </div>
@@ -3158,40 +5309,52 @@ export default function App() {
             <div className="space-y-2.5 text-xs">
               {[
                 {
-                  role: 'Admin',
-                  email: 'admin@floodguard.gov.bd',
-                  phone: '01711000001',
-                  password: 'FG-Admin#2026!',
-                  desc: 'Full access to Admin Panel, User Management, and all dashboards',
+                  roleLabel: 'User (General Public)',
+                  roleValue: 'Citizen' as StaffAuthRole,
+                  email: 'user@floodguard.gov.bd',
+                  phone: '01711000111',
+                  password: 'FG-User#2026!',
+                  desc: 'Redirects to User Dashboard (Flood Alerts, SOS Help & Shelter Access)',
                 },
                 {
-                  role: 'Forecast Officer',
+                  roleLabel: 'Forecast Officer',
+                  roleValue: 'Forecast Officer' as StaffAuthRole,
                   email: 'forecast@floodguard.gov.bd',
                   phone: '01711000222',
                   password: 'FG-Forecast#2026!',
-                  desc: 'Access to Forecast Officer Dashboard, Trained Model Upload & Validation',
+                  desc: 'Redirects to Forecast Officer Dashboard (Model Upload & Validation)',
                 },
                 {
-                  role: 'Volunteer',
-                  email: 'volunteer@floodguard.gov.bd',
-                  phone: '01711000444',
-                  password: 'FG-Volunteer#2026!',
-                  desc: 'Access to Volunteer Panel, SOS Rescue Dispatch & Live SOS Messages',
-                },
-                {
-                  role: 'Authority (Disaster Mgmt)',
+                  roleLabel: 'Disaster Management',
+                  roleValue: 'Authority' as StaffAuthRole,
                   email: 'disaster@floodguard.gov.bd',
                   phone: '01711000333',
                   password: 'FG-Disaster#2026!',
-                  desc: 'Access to Disaster Management Warning Control Center',
+                  desc: 'Redirects to Disaster Management Warning Control Center',
+                },
+                {
+                  roleLabel: 'Volunteer & SOS',
+                  roleValue: 'Volunteer' as StaffAuthRole,
+                  email: 'volunteer@floodguard.gov.bd',
+                  phone: '01711000444',
+                  password: 'FG-Volunteer#2026!',
+                  desc: 'Redirects to Volunteer Dashboard & SOS Rescue Dispatch',
+                },
+                {
+                  roleLabel: 'Admin',
+                  roleValue: 'Admin' as StaffAuthRole,
+                  email: 'admin@floodguard.gov.bd',
+                  phone: '01711000001',
+                  password: 'FG-Admin#2026!',
+                  desc: 'Redirects to Admin Control Panel (User & Role Provisioning)',
                 },
               ].map((cred) => (
                 <div
-                  key={cred.role}
+                  key={cred.roleValue}
                   className="p-3 rounded-xl bg-slate-800/90 border border-slate-700 flex items-center justify-between gap-3"
                 >
                   <div className="space-y-0.5">
-                    <div className="font-bold text-[#55d6be]">{cred.role}</div>
+                    <div className="font-bold text-[#55d6be]">{cred.roleLabel}</div>
                     <div className="font-mono text-slate-200">Email: {cred.email}</div>
                     <div className="font-mono text-amber-300">Password: {cred.password}</div>
                     <div className="text-[11px] text-slate-400">{cred.desc}</div>
@@ -3200,6 +5363,7 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       setAuthMode('login');
+                      setLoginRole(cred.roleValue);
                       setLoginEmail(cred.email);
                       setLoginPhone(cred.phone);
                       setLoginPassword(cred.password);

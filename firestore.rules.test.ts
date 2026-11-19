@@ -179,4 +179,24 @@ export const DIRTY_DOZEN_TESTS: DirtyDozenTestCase[] = [
     },
     expectedResult: 'PERMISSION_DENIED',
   },
+  {
+    id: 13,
+    name: 'Lateral PII Read on Other User Email Log',
+    collectionPath: '/email_logs/log_other_user',
+    operation: 'get',
+    auth: { uid: 'user_2', email: 'user2@example.com', email_verified: true },
+    expectedResult: 'PERMISSION_DENIED',
+  },
+  {
+    id: 14,
+    name: 'Non-Admin Mutation of System Rate Limit in Email Settings',
+    collectionPath: '/email_settings/sys_1',
+    operation: 'update',
+    auth: { uid: 'user_1', email: 'user1@example.com', email_verified: true },
+    payload: {
+      settingType: 'system',
+      rateLimitPerMinute: 500,
+    },
+    expectedResult: 'PERMISSION_DENIED',
+  },
 ];

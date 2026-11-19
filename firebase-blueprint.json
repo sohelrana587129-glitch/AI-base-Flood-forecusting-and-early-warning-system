@@ -251,7 +251,7 @@
         },
         "status": {
           "type": "string",
-          "enum": ["Pending", "In Progress", "Completed"],
+          "enum": ["Pending", "Accepted", "In Progress", "Completed"],
           "maxLength": 20
         },
         "createdAt": {
@@ -314,6 +314,259 @@
         }
       },
       "required": ["ownerId", "name", "district", "area", "capacity", "occupancy", "elevation", "status", "createdAt", "updatedAt"]
+    },
+    "ShelterBooking": {
+      "title": "ShelterBooking",
+      "description": "User flood shelter reservation for 2 to 5 persons",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "shelterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "shelterName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "bookerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "persons": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Confirmed", "Cancelled"],
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "shelterId", "shelterName", "bookerName", "persons", "status", "createdAt", "updatedAt"]
+    },
+    "EmailLog": {
+      "title": "EmailLog",
+      "description": "Persistent transactional email audit and delivery status log",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "recipientEmail": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "recipientName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "recipientRole": {
+          "type": "string",
+          "enum": ["Citizen", "Volunteer", "Authority", "Forecast Officer", "Admin", "External"],
+          "maxLength": 30
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "emailType": {
+          "type": "string",
+          "enum": ["SOS Alert", "SOS Status Update", "Emergency Broadcast", "Operational"],
+          "maxLength": 40
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["Normal", "Critical"],
+          "maxLength": 20
+        },
+        "status": {
+          "type": "string",
+          "enum": ["queued", "sent", "delivered", "bounced", "failed"],
+          "maxLength": 20
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["resend", "sendgrid", "unconfigured"],
+          "maxLength": 30
+        },
+        "providerMessageId": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "errorMessage": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "retryCount": {
+          "type": "number"
+        },
+        "district": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "relatedSosId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "recipientEmail",
+        "recipientName",
+        "recipientRole",
+        "subject",
+        "message",
+        "emailType",
+        "priority",
+        "status",
+        "provider",
+        "providerMessageId",
+        "errorMessage",
+        "retryCount",
+        "district",
+        "relatedSosId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "EmailTemplate": {
+      "title": "EmailTemplate",
+      "description": "Reusable emergency flood and SOS communication email template",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Flood Warning", "Evacuation Order", "Shelter Info", "SOS Alert", "SOS Status Update", "Custom"],
+          "maxLength": 40
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "isActive": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "name", "category", "subject", "body", "isActive", "createdAt", "updatedAt"]
+    },
+    "EmailSettings": {
+      "title": "EmailSettings",
+      "description": "User email notification preferences and system rate-limit settings",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "settingType": {
+          "type": "string",
+          "enum": ["system", "user_preference"],
+          "maxLength": 30
+        },
+        "userEmail": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "district": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "sosAlertsEnabled": {
+          "type": "boolean"
+        },
+        "statusUpdatesEnabled": {
+          "type": "boolean"
+        },
+        "broadcastsEnabled": {
+          "type": "boolean"
+        },
+        "rateLimitPerMinute": {
+          "type": "number"
+        },
+        "maxRetries": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "settingType",
+        "userEmail",
+        "district",
+        "sosAlertsEnabled",
+        "statusUpdatesEnabled",
+        "broadcastsEnabled",
+        "rateLimitPerMinute",
+        "maxRetries",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -348,6 +601,22 @@
     "/shelters/{shelterId}": {
       "schema": "Shelter",
       "description": "Flood shelter registry and live occupancy"
+    },
+    "/shelter_bookings/{bookingId}": {
+      "schema": "ShelterBooking",
+      "description": "User shelter group bookings (minimum 2, maximum 5 persons)"
+    },
+    "/email_logs/{logId}": {
+      "schema": "EmailLog",
+      "description": "Transactional email delivery logs and status history"
+    },
+    "/email_templates/{templateId}": {
+      "schema": "EmailTemplate",
+      "description": "Emergency broadcast and SOS email templates"
+    },
+    "/email_settings/{settingId}": {
+      "schema": "EmailSettings",
+      "description": "Notification opt-in preferences and email rate-limit settings"
     }
   }
 }

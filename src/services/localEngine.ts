@@ -31,6 +31,7 @@ interface StoredAccount {
   phone: string;
   password: string;
   role: UserRole;
+  status?: 'Active' | 'Suspended';
 }
 
 const DEFAULT_ACCOUNTS: StoredAccount[] = [
@@ -42,6 +43,7 @@ const DEFAULT_ACCOUNTS: StoredAccount[] = [
     phone: '01711000001',
     password: 'FG-Admin#2026!',
     role: 'Admin',
+    status: 'Active',
   },
   {
     id: 'acc_forecast_01',
@@ -51,6 +53,7 @@ const DEFAULT_ACCOUNTS: StoredAccount[] = [
     phone: '01711000222',
     password: 'FG-Forecast#2026!',
     role: 'Forecast Officer',
+    status: 'Active',
   },
   {
     id: 'acc_volunteer_01',
@@ -60,6 +63,7 @@ const DEFAULT_ACCOUNTS: StoredAccount[] = [
     phone: '01711000444',
     password: 'FG-Volunteer#2026!',
     role: 'Volunteer',
+    status: 'Active',
   },
   {
     id: 'acc_disaster_01',
@@ -69,13 +73,31 @@ const DEFAULT_ACCOUNTS: StoredAccount[] = [
     phone: '01711000333',
     password: 'FG-Disaster#2026!',
     role: 'Authority',
+    status: 'Active',
+  },
+  {
+    id: 'acc_user_01',
+    firstName: 'Rahim',
+    lastName: 'Uddin',
+    email: 'user@floodguard.gov.bd',
+    phone: '01711000111',
+    password: 'FG-User#2026!',
+    role: 'Citizen',
+    status: 'Active',
   },
 ];
+
+export function formatRoleDisplay(role: UserRole): string {
+  if (role === 'Citizen') return 'User';
+  if (role === 'Authority') return 'Disaster Management';
+  if (role === 'Volunteer') return 'Volunteer & SOS';
+  return role;
+}
 
 const DEFAULT_SOS_MESSAGES: SosAlertMessage[] = [
   {
     id: 'sos_msg_1',
-    senderName: 'Samia Akter',
+    senderName: 'Samia Sultana',
     senderPhone: '01712345678',
     location: 'Dhaka (Kamrangirchar Low-lying Ward)',
     emergencyType: 'Flood Rescue',
@@ -86,7 +108,7 @@ const DEFAULT_SOS_MESSAGES: SosAlertMessage[] = [
   },
   {
     id: 'sos_msg_2',
-    senderName: 'Sohel Mia',
+    senderName: 'Sohel Rana',
     senderPhone: '01819876543',
     location: 'Sylhet (Companiganj Riverbank)',
     emergencyType: 'Emergency Help',
@@ -97,7 +119,7 @@ const DEFAULT_SOS_MESSAGES: SosAlertMessage[] = [
   },
   {
     id: 'sos_msg_3',
-    senderName: 'Mim Chowdhury',
+    senderName: 'Israt Mim',
     senderPhone: '01911223344',
     location: 'Sunamganj (Tahirpur Haor)',
     emergencyType: 'Food Support',
@@ -338,7 +360,8 @@ export function runLocalModelInference(
 export function loginLocalAccount(
   email: string,
   phone: string,
-  password: string
+  password: string,
+  selectedRole: UserRole
 ): { ok: boolean; error?: string; sessionUser?: SessionUser; sosMessages?: SosAlertMessage[] } {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const accounts = getStoredAccounts();
@@ -349,8 +372,21 @@ export function loginLocalAccount(
   if (!account) {
     return {
       ok: false,
-      error:
-        'Invalid credentials. Unauthorized access denied. Please check your role email and password or register an account first.',
+      error: 'Invalid email or password. Please check your credentials or register a new account.',
+    };
+  }
+
+  if (account.status === 'Suspended') {
+    return {
+      ok: false,
+      error: 'This account has been suspended by an administrator. Contact Admin support.',
+    };
+  }
+
+  if (account.role !== selectedRole) {
+    return {
+      ok: false,
+      error: `Incorrect role selected. This account is assigned to "${formatRoleDisplay(account.role)}", not "${formatRoleDisplay(selectedRole)}". Please select your assigned role.`,
     };
   }
 
@@ -376,68 +412,41 @@ export function registerLocalAccount(payload: {
   password: string;
   confirmPassword?: string;
   role: UserRole;
-  rolePasscode?: string;
 }): { ok: boolean; error?: string; sessionUser?: SessionUser; sosMessages?: SosAlertMessage[] } {
-  const { firstName, lastName, email, phone, password, confirmPassword, role, rolePasscode } =
-    payload;
+  const { firstName, lastName, email, phone, password, confirmPassword, role } = payload;
 
-  if (!firstName || !lastName || !email || !phone || !password) {
+  if (!firstName || !lastName || !email || !phone || !password || !role) {
     return {
       ok: false,
-      error: 'All registration fields (name, email, phone, password) are required.',
+      error: 'All registration fields (name, email, phone, role, password) are required.',
     };
+  }
+
+  if (String(password).length < 6) {
+    return { ok: false, error: 'Password must be at least 6 characters long.' };
   }
 
   if (confirmPassword !== undefined && password !== confirmPassword) {
     return { ok: false, error: 'Password and Confirm Password do not match.' };
   }
 
-  if (
-    role === 'Admin' &&
-    rolePasscode !== 'FG-Admin#2026!' &&
-    password !== 'FG-Admin#2026!'
-  ) {
-    return {
-      ok: false,
-      error: 'Admin registration requires the Admin authorization password (FG-Admin#2026!).',
-    };
-  }
-  if (
-    role === 'Forecast Officer' &&
-    rolePasscode !== 'FG-Forecast#2026!' &&
-    password !== 'FG-Forecast#2026!'
-  ) {
+  if (role !== 'Citizen') {
     return {
       ok: false,
       error:
-        'Forecast Officer registration requires the Forecast authorization password (FG-Forecast#2026!).',
-    };
-  }
-  if (
-    role === 'Volunteer' &&
-    rolePasscode !== 'FG-Volunteer#2026!' &&
-    password !== 'FG-Volunteer#2026!'
-  ) {
-    return {
-      ok: false,
-      error:
-        'Volunteer registration requires the Volunteer authorization password (FG-Volunteer#2026!).',
-    };
-  }
-  if (
-    role === 'Authority' &&
-    rolePasscode !== 'FG-Disaster#2026!' &&
-    password !== 'FG-Disaster#2026!'
-  ) {
-    return {
-      ok: false,
-      error:
-        'Disaster Authority registration requires the Authority authorization password (FG-Disaster#2026!).',
+        'Public registration is restricted to User (General Public) accounts only. Staff and Admin roles can only be created or assigned by an authorized administrator.',
     };
   }
 
   const accounts = getStoredAccounts();
   const normalizedEmail = String(email).trim().toLowerCase();
+  if (accounts.some((a) => a.email.toLowerCase() === normalizedEmail)) {
+    return {
+      ok: false,
+      error: 'An account with this email already exists. Please log in with your assigned role.',
+    };
+  }
+
   const newAcc: StoredAccount = {
     id: `acc_${Date.now()}`,
     firstName: String(firstName).trim(),
@@ -446,14 +455,10 @@ export function registerLocalAccount(payload: {
     phone: String(phone).trim(),
     password: String(password),
     role,
+    status: 'Active',
   };
 
-  const idx = accounts.findIndex((a) => a.email.toLowerCase() === normalizedEmail);
-  if (idx >= 0) {
-    accounts[idx] = newAcc;
-  } else {
-    accounts.push(newAcc);
-  }
+  accounts.push(newAcc);
   saveStoredAccounts(accounts);
 
   return {
@@ -468,6 +473,64 @@ export function registerLocalAccount(payload: {
     },
     sosMessages: getStoredSosMessages(),
   };
+}
+
+export function getLocalManagedUsers() {
+  return getStoredAccounts().map((u) => ({
+    id: u.id,
+    ownerId: 'local',
+    firstName: u.firstName,
+    lastName: u.lastName,
+    displayRole: u.role,
+    status: u.status || ('Active' as const),
+    email: u.email,
+    phone: u.phone,
+  }));
+}
+
+export function createLocalUserByAdmin(payload: {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  password: string;
+  role: UserRole;
+}): { ok: boolean; error?: string } {
+  const accounts = getStoredAccounts();
+  const normalizedEmail = String(payload.email).trim().toLowerCase();
+  if (accounts.some((a) => a.email.toLowerCase() === normalizedEmail)) {
+    return { ok: false, error: 'An account with this email already exists.' };
+  }
+  accounts.push({
+    id: `acc_${Date.now()}`,
+    firstName: String(payload.firstName).trim(),
+    lastName: String(payload.lastName).trim(),
+    email: normalizedEmail,
+    phone: String(payload.phone).trim(),
+    password: String(payload.password),
+    role: payload.role,
+    status: 'Active',
+  });
+  saveStoredAccounts(accounts);
+  return { ok: true };
+}
+
+export function updateLocalUserByAdmin(
+  id: string,
+  updates: { role?: UserRole; status?: 'Active' | 'Suspended' }
+) {
+  const accounts = getStoredAccounts();
+  const idx = accounts.findIndex((a) => a.id === id);
+  if (idx >= 0) {
+    if (updates.role) accounts[idx].role = updates.role;
+    if (updates.status) accounts[idx].status = updates.status;
+    saveStoredAccounts(accounts);
+  }
+}
+
+export function deleteLocalUserByAdmin(id: string) {
+  const accounts = getStoredAccounts().filter((a) => a.id !== id);
+  saveStoredAccounts(accounts);
 }
 
 export function addLocalSosMessage(payload: {

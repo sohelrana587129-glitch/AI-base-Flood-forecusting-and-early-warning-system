@@ -117,7 +117,7 @@ service cloud.firestore {
         data.emergencyType is string && data.emergencyType.size() <= 40 &&
         data.emergencyType in ['Flood Rescue', 'Emergency Help', 'Food Support', 'Medical Aid'] &&
         data.status is string && data.status.size() <= 20 &&
-        data.status in ['Pending', 'In Progress', 'Completed'] &&
+        data.status in ['Pending', 'Accepted', 'In Progress', 'Completed'] &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -135,6 +135,96 @@ service cloud.firestore {
         data.elevation is number && data.elevation >= 0 && data.elevation <= 5000 &&
         data.status is string && data.status.size() <= 30 &&
         data.status in ['Available', 'Near Capacity', 'Full'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidShelterBooking(data) {
+      return data.keys().hasAll(['ownerId', 'shelterId', 'shelterName', 'bookerName', 'persons', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'shelterId', 'shelterName', 'bookerName', 'persons', 'status', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.shelterId is string && data.shelterId.size() >= 1 && data.shelterId.size() <= 128 && data.shelterId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.shelterName is string && data.shelterName.size() >= 1 && data.shelterName.size() <= 120 &&
+        data.bookerName is string && data.bookerName.size() >= 1 && data.bookerName.size() <= 100 &&
+        data.persons is number && data.persons >= 2 && data.persons <= 5 &&
+        data.status is string && data.status.size() <= 20 &&
+        data.status in ['Confirmed', 'Cancelled'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidEmailLog(data) {
+      return data.keys().hasAll([
+          'ownerId', 'recipientEmail', 'recipientName', 'recipientRole',
+          'subject', 'message', 'emailType', 'priority', 'status',
+          'provider', 'providerMessageId', 'errorMessage', 'retryCount',
+          'district', 'relatedSosId', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'recipientEmail', 'recipientName', 'recipientRole',
+          'subject', 'message', 'emailType', 'priority', 'status',
+          'provider', 'providerMessageId', 'errorMessage', 'retryCount',
+          'district', 'relatedSosId', 'createdAt', 'updatedAt'
+        ]) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.recipientEmail is string && data.recipientEmail.size() >= 3 && data.recipientEmail.size() <= 160 &&
+        data.recipientName is string && data.recipientName.size() >= 1 && data.recipientName.size() <= 120 &&
+        data.recipientRole is string && data.recipientRole.size() <= 30 &&
+        data.recipientRole in ['Citizen', 'Volunteer', 'Authority', 'Forecast Officer', 'Admin', 'External'] &&
+        data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 200 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 2000 &&
+        data.emailType is string && data.emailType.size() <= 40 &&
+        data.emailType in ['SOS Alert', 'SOS Status Update', 'Emergency Broadcast', 'Operational'] &&
+        data.priority is string && data.priority.size() <= 20 &&
+        data.priority in ['Normal', 'Critical'] &&
+        data.status is string && data.status.size() <= 20 &&
+        data.status in ['queued', 'sent', 'delivered', 'bounced', 'failed'] &&
+        data.provider is string && data.provider.size() <= 30 &&
+        data.provider in ['resend', 'sendgrid', 'unconfigured'] &&
+        data.providerMessageId is string && data.providerMessageId.size() <= 160 &&
+        data.errorMessage is string && data.errorMessage.size() <= 500 &&
+        data.retryCount is number && data.retryCount >= 0 && data.retryCount <= 10 &&
+        data.district is string && data.district.size() <= 60 &&
+        data.relatedSosId is string && data.relatedSosId.size() <= 128 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidEmailTemplate(data) {
+      return data.keys().hasAll(['ownerId', 'name', 'category', 'subject', 'body', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerId', 'name', 'category', 'subject', 'body', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.category is string && data.category.size() <= 40 &&
+        data.category in ['Flood Warning', 'Evacuation Order', 'Shelter Info', 'SOS Alert', 'SOS Status Update', 'Custom'] &&
+        data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 200 &&
+        data.body is string && data.body.size() >= 1 && data.body.size() <= 2000 &&
+        data.isActive is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidEmailSettings(data) {
+      return data.keys().hasAll([
+          'ownerId', 'settingType', 'userEmail', 'district',
+          'sosAlertsEnabled', 'statusUpdatesEnabled', 'broadcastsEnabled',
+          'rateLimitPerMinute', 'maxRetries', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'settingType', 'userEmail', 'district',
+          'sosAlertsEnabled', 'statusUpdatesEnabled', 'broadcastsEnabled',
+          'rateLimitPerMinute', 'maxRetries', 'createdAt', 'updatedAt'
+        ]) &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.settingType is string && data.settingType.size() <= 30 &&
+        data.settingType in ['system', 'user_preference'] &&
+        data.userEmail is string && data.userEmail.size() <= 160 &&
+        data.district is string && data.district.size() <= 60 &&
+        data.sosAlertsEnabled is bool &&
+        data.statusUpdatesEnabled is bool &&
+        data.broadcastsEnabled is bool &&
+        data.rateLimitPerMinute is number && data.rateLimitPerMinute >= 1 && data.rateLimitPerMinute <= 500 &&
+        data.maxRetries is number && data.maxRetries >= 0 && data.maxRetries <= 5 &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -283,9 +373,90 @@ service cloud.firestore {
         incoming().updatedAt == request.time && (
           isAdmin() ||
           (existing().ownerId == request.auth.uid &&
-           incoming().diff(existing()).affectedKeys().hasOnly(['occupancy', 'status', 'updatedAt']))
+           incoming().diff(existing()).affectedKeys().hasOnly(['capacity', 'occupancy', 'status', 'updatedAt']))
         );
       allow delete: if isVerified() && isValidId(shelterId) && (existing().ownerId == request.auth.uid || isAdmin());
+    }
+
+    // 9. User Shelter Bookings Collection (2 to 5 persons per booking)
+    match /shelter_bookings/{bookingId} {
+      allow get: if isSignedIn() && isValidId(bookingId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(bookingId) && isValidShelterBooking(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(bookingId) && isValidShelterBooking(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid &&
+           existing().status != 'Cancelled' &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+        );
+      allow delete: if isVerified() && isValidId(bookingId) && (existing().ownerId == request.auth.uid || isAdmin());
+    }
+
+    // 10. Email Notification Logs Collection (PII-isolated to owner or Admin)
+    match /email_logs/{logId} {
+      allow get: if isSignedIn() && isValidId(logId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(logId) && isValidEmailLog(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(logId) && isValidEmailLog(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid &&
+           existing().status != 'delivered' &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'providerMessageId', 'errorMessage', 'retryCount', 'updatedAt']))
+        );
+      allow delete: if isVerified() && isValidId(logId) && isAdmin();
+    }
+
+    // 11. Emergency Email Templates Collection
+    match /email_templates/{templateId} {
+      allow get: if isSignedIn() && isValidId(templateId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(templateId) && isValidEmailTemplate(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(templateId) && isValidEmailTemplate(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'subject', 'body', 'isActive', 'updatedAt']))
+        );
+      allow delete: if isVerified() && isValidId(templateId) && (existing().ownerId == request.auth.uid || isAdmin());
+    }
+
+    // 12. Email Notification Preferences & System Settings Collection
+    match /email_settings/{settingId} {
+      allow get: if isSignedIn() && isValidId(settingId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerified() && isValidId(settingId) && isValidEmailSettings(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        (incoming().settingType == 'user_preference' || isAdmin()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(settingId) && isValidEmailSettings(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid &&
+           existing().settingType == 'user_preference' &&
+           incoming().settingType == 'user_preference' &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['district', 'sosAlertsEnabled', 'statusUpdatesEnabled', 'broadcastsEnabled', 'updatedAt']))
+        );
+      allow delete: if isVerified() && isValidId(settingId) && (existing().ownerId == request.auth.uid || isAdmin());
     }
   }
 }

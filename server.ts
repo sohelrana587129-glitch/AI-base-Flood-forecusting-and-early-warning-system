@@ -1,8 +1,32 @@
 import express from 'express';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
+import {
+  EMAIL_LOGS_STORE,
+  EMAIL_TEMPLATES_STORE,
+  EMAIL_SYSTEM_SETTINGS,
+  getActiveEmailProvider,
+  isValidEmailAddress,
+  sanitizeHeaderText,
+  checkEmailRateLimit,
+  buildFloodGuardEmailHtml,
+  isCriticalSosEmergency,
+  renderTemplateText,
+  queueAndSendEmail,
+  retryEmailDelivery,
+  syncResendMessageStatus,
+  verifyWebhookSecretIfSet,
+  applyResendWebhookEvent,
+  applySendGridWebhookEvents,
+  toPublicEmailLog,
+  computeEmailMetrics,
+  type EmailTemplateCategory,
+  type EmailType,
+  type EmailPriority,
+} from './server/emailService.ts';
 
 dotenv.config();
 
@@ -12,7 +36,14 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '25mb' }));
+app.use(
+  express.json({
+    limit: '25mb',
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody?: string }).rawBody = buf.toString('utf8');
+    },
+  })
+);
 
 // Initialize Gemini AI client on server side
 function getGenAIClient() {
@@ -475,8 +506,16 @@ app.get('/api/v1/telemetry', (req, res) => {
   });
 });
 
-// 2. POST /api/v1/ingest-sensor - Ingests real-time IoT sensor + Satellite reading
+// 2. POST /api/v1/ingest-sensor - Ingests real-time IoT sensor + Satellite reading (Forecast Officer only)
 app.post('/api/v1/ingest-sensor', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser || verifiedUser.role !== 'Forecast Officer') {
+    res.status(403).json({
+      error: 'Forbidden: Only an authenticated Forecast Officer can edit or ingest sensor telemetry data.',
+    });
+    return;
+  }
+
   const { stationId = 'station_01', waterLevel, rainfall, soilMoisture } = req.body;
   const station = STATIONS[stationId] || STATIONS.station_01;
 
@@ -803,7 +842,7 @@ Return a JSON object containing:
   }
 });
 
-// 7. Secure Role-Based Authentication & Authorized SOS Message Stream
+// 7. Secure Role-Based Authentication, Backend Session Store & Authorized SOS Message Stream
 interface RegisteredAccount {
   id: string;
   firstName: string;
@@ -812,6 +851,14 @@ interface RegisteredAccount {
   phone: string;
   password: string;
   role: 'Admin' | 'Forecast Officer' | 'Authority' | 'Volunteer' | 'Citizen';
+  status: 'Active' | 'Suspended';
+  district: 'sylhet' | 'dhaka' | 'sunamganj' | 'dinajpur';
+  emailVerified: boolean;
+  notificationPreferences: {
+    sosAlerts: boolean;
+    statusUpdates: boolean;
+    emergencyBroadcasts: boolean;
+  };
 }
 
 const REGISTERED_ACCOUNTS: RegisteredAccount[] = [
@@ -823,6 +870,10 @@ const REGISTERED_ACCOUNTS: RegisteredAccount[] = [
     phone: '01711000001',
     password: 'FG-Admin#2026!',
     role: 'Admin',
+    status: 'Active',
+    district: 'dhaka',
+    emailVerified: true,
+    notificationPreferences: { sosAlerts: true, statusUpdates: true, emergencyBroadcasts: true },
   },
   {
     id: 'acc_forecast_01',
@@ -832,6 +883,10 @@ const REGISTERED_ACCOUNTS: RegisteredAccount[] = [
     phone: '01711000222',
     password: 'FG-Forecast#2026!',
     role: 'Forecast Officer',
+    status: 'Active',
+    district: 'sylhet',
+    emailVerified: true,
+    notificationPreferences: { sosAlerts: false, statusUpdates: true, emergencyBroadcasts: true },
   },
   {
     id: 'acc_volunteer_01',
@@ -841,6 +896,23 @@ const REGISTERED_ACCOUNTS: RegisteredAccount[] = [
     phone: '01711000444',
     password: 'FG-Volunteer#2026!',
     role: 'Volunteer',
+    status: 'Active',
+    district: 'sylhet',
+    emailVerified: true,
+    notificationPreferences: { sosAlerts: true, statusUpdates: true, emergencyBroadcasts: true },
+  },
+  {
+    id: 'acc_volunteer_02',
+    firstName: 'Nusrat',
+    lastName: 'Jahan',
+    email: 'volunteer.dhaka@floodguard.gov.bd',
+    phone: '01711000445',
+    password: 'FG-Volunteer#2026!',
+    role: 'Volunteer',
+    status: 'Active',
+    district: 'dhaka',
+    emailVerified: true,
+    notificationPreferences: { sosAlerts: true, statusUpdates: true, emergencyBroadcasts: true },
   },
   {
     id: 'acc_disaster_01',
@@ -850,57 +922,246 @@ const REGISTERED_ACCOUNTS: RegisteredAccount[] = [
     phone: '01711000333',
     password: 'FG-Disaster#2026!',
     role: 'Authority',
+    status: 'Active',
+    district: 'sylhet',
+    emailVerified: true,
+    notificationPreferences: { sosAlerts: true, statusUpdates: true, emergencyBroadcasts: true },
+  },
+  {
+    id: 'acc_user_01',
+    firstName: 'Rahim',
+    lastName: 'Uddin',
+    email: 'user@floodguard.gov.bd',
+    phone: '01711000111',
+    password: 'FG-User#2026!',
+    role: 'Citizen',
+    status: 'Active',
+    district: 'sylhet',
+    emailVerified: true,
+    notificationPreferences: { sosAlerts: true, statusUpdates: true, emergencyBroadcasts: true },
+  },
+  {
+    id: 'acc_user_02',
+    firstName: 'Samia',
+    lastName: 'Sultana',
+    email: 'samia.sultana@floodguard.gov.bd',
+    phone: '01712345678',
+    password: 'FG-User#2026!',
+    role: 'Citizen',
+    status: 'Active',
+    district: 'dhaka',
+    emailVerified: true,
+    notificationPreferences: { sosAlerts: true, statusUpdates: true, emergencyBroadcasts: true },
+  },
+  {
+    id: 'acc_user_03',
+    firstName: 'Israt',
+    lastName: 'Mim',
+    email: 'israt.mim@floodguard.gov.bd',
+    phone: '01911223344',
+    password: 'FG-User#2026!',
+    role: 'Citizen',
+    status: 'Active',
+    district: 'sunamganj',
+    emailVerified: true,
+    notificationPreferences: { sosAlerts: true, statusUpdates: true, emergencyBroadcasts: false },
   },
 ];
+
+interface ServerSession {
+  token: string;
+  userId: string;
+  createdAt: number;
+}
+
+const ACTIVE_SESSIONS = new Map<string, ServerSession>();
+
+function normalizeRoleInput(rawRole: unknown): RegisteredAccount['role'] | null {
+  const val = String(rawRole || '').trim();
+  if (val === 'User' || val === 'General User' || val === 'Public User' || val === 'User (General Public)' || val === 'Citizen') {
+    return 'Citizen';
+  }
+  if (val === 'Forecast Officer') return 'Forecast Officer';
+  if (val === 'Disaster Management' || val === 'Authority' || val === 'Authority (Disaster Mgmt)') {
+    return 'Authority';
+  }
+  if (val === 'Volunteer & SOS' || val === 'Volunteer') return 'Volunteer';
+  if (val === 'Admin') return 'Admin';
+  return null;
+}
+
+function formatRoleLabel(role: RegisteredAccount['role']): string {
+  if (role === 'Citizen') return 'User';
+  if (role === 'Authority') return 'Disaster Management';
+  if (role === 'Volunteer') return 'Volunteer & SOS';
+  return role;
+}
+
+function createServerSession(userId: string): string {
+  const token = crypto.randomBytes(32).toString('hex');
+  ACTIVE_SESSIONS.set(token, { token, userId, createdAt: Date.now() });
+  return token;
+}
+
+function getAuthenticatedAccount(req: express.Request): RegisteredAccount | null {
+  const authHeader = req.headers.authorization;
+  const bearerToken =
+    typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : '';
+  const headerToken = (req.headers['x-session-token'] as string | undefined)?.trim() || '';
+  const token = bearerToken || headerToken;
+
+  if (token) {
+    const sess = ACTIVE_SESSIONS.get(token);
+    if (sess) {
+      const account = REGISTERED_ACCOUNTS.find((a) => a.id === sess.userId);
+      if (account && account.status === 'Active') {
+        return account;
+      }
+    }
+  }
+  return null;
+}
+
+function toSafeSessionUser(account: RegisteredAccount, token?: string) {
+  return {
+    id: account.id,
+    firstName: account.firstName,
+    lastName: account.lastName,
+    email: account.email,
+    phone: account.phone,
+    role: account.role,
+    ...(token ? { token } : {}),
+  };
+}
 
 interface SosBroadcastMessage {
   id: string;
   senderName: string;
   senderPhone: string;
+  senderEmail?: string;
   location: string;
   emergencyType: 'Flood Rescue' | 'Emergency Help' | 'Food Support' | 'Medical Aid';
   message: string;
-  status: 'Pending' | 'In Progress' | 'Completed';
+  status: 'Pending' | 'Accepted' | 'In Progress' | 'Completed';
+  assignedVolunteer?: string;
+  isCritical?: boolean;
   timestamp: string;
+  submittedAt: string;
+}
+
+interface SosRequestServerRecord {
+  id: string;
+  ownerId: string;
+  requesterName: string;
+  requesterPhone: string;
+  requesterEmail: string;
+  location: string;
+  emergencyType: 'Flood Rescue' | 'Emergency Help' | 'Food Support' | 'Medical Aid';
+  description: string;
+  status: 'Pending' | 'Accepted' | 'In Progress' | 'Completed';
+  assignedVolunteer?: string;
+  isCritical: boolean;
+  submittedAt: string;
 }
 
 const SOS_MESSAGES_STORE: SosBroadcastMessage[] = [
   {
     id: 'sos_msg_1',
-    senderName: 'Samia Akter',
+    senderName: 'Samia Sultana',
     senderPhone: '01712345678',
+    senderEmail: 'samia.sultana@floodguard.gov.bd',
     location: 'Dhaka (Kamrangirchar Low-lying Ward)',
     emergencyType: 'Flood Rescue',
     message: 'URGENT SOS: Ground floor submerged 1.4m near river embankment. 4 family members stranded on rooftop, need rescue boat immediately.',
     status: 'Pending',
+    isCritical: true,
     timestamp: '10:12 AM',
+    submittedAt: '10:12 AM',
   },
   {
     id: 'sos_msg_2',
-    senderName: 'Sohel Mia',
+    senderName: 'Sohel Rana',
     senderPhone: '01819876543',
+    senderEmail: 'user@floodguard.gov.bd',
     location: 'Sylhet (Companiganj Riverbank)',
     emergencyType: 'Emergency Help',
     message: 'URGENT SOS: Surma River water entered village road. Elderly patient requires immediate evacuation to Companiganj High School shelter.',
     status: 'Pending',
+    isCritical: true,
     timestamp: '10:18 AM',
+    submittedAt: '10:18 AM',
   },
   {
     id: 'sos_msg_3',
-    senderName: 'Mim Chowdhury',
+    senderName: 'Israt Mim',
     senderPhone: '01911223344',
+    senderEmail: 'israt.mim@floodguard.gov.bd',
     location: 'Sunamganj (Tahirpur Haor)',
     emergencyType: 'Food Support',
     message: 'SOS Relief Alert: 35 displaced families at Tahirpur shelter require dry food packets and clean drinking water.',
     status: 'Completed',
+    assignedVolunteer: 'Sohel Rana (Volunteer & SOS)',
+    isCritical: false,
     timestamp: '09:45 AM',
+    submittedAt: '09:45 AM',
+  },
+];
+
+const SOS_REQUESTS_STORE: SosRequestServerRecord[] = [
+  {
+    id: 'sos_samia',
+    ownerId: 'local',
+    requesterName: 'Samia Sultana',
+    requesterPhone: '01712345678',
+    requesterEmail: 'samia.sultana@floodguard.gov.bd',
+    location: 'Dhaka',
+    emergencyType: 'Flood Rescue',
+    description: 'Ground floor submerged 1.4m near river embankment. 4 family members stranded on rooftop.',
+    status: 'Pending',
+    isCritical: true,
+    submittedAt: '10:12 AM',
+  },
+  {
+    id: 'sos_sohel',
+    ownerId: 'local',
+    requesterName: 'Sohel Rana',
+    requesterPhone: '01819876543',
+    requesterEmail: 'user@floodguard.gov.bd',
+    location: 'Sylhet',
+    emergencyType: 'Emergency Help',
+    description: 'Surma River water entered village road. Elderly patient requires immediate evacuation.',
+    status: 'Pending',
+    isCritical: true,
+    submittedAt: '10:18 AM',
+  },
+  {
+    id: 'sos_mim',
+    ownerId: 'local',
+    requesterName: 'Israt Mim',
+    requesterPhone: '01911223344',
+    requesterEmail: 'israt.mim@floodguard.gov.bd',
+    location: 'Sunamganj',
+    emergencyType: 'Food Support',
+    description: '35 displaced families at Tahirpur shelter require dry food packets and clean drinking water.',
+    status: 'Completed',
+    assignedVolunteer: 'Sohel Rana (Volunteer & SOS)',
+    isCritical: false,
+    submittedAt: '09:45 AM',
   },
 ];
 
 app.post('/api/v1/auth/login', (req, res) => {
-  const { email, phone, password } = req.body;
-  if (!email || !password) {
-    res.status(400).json({ error: 'Email and password are required.' });
+  const { email, phone, password, role } = req.body;
+  if (!email || !password || !role) {
+    res.status(400).json({ error: 'Email, password, and role selection are required.' });
+    return;
+  }
+
+  const requestedRole = normalizeRoleInput(role);
+  if (!requestedRole) {
+    res.status(400).json({ error: 'Invalid role selected.' });
     return;
   }
 
@@ -911,30 +1172,85 @@ app.post('/api/v1/auth/login', (req, res) => {
 
   if (!account) {
     res.status(401).json({
-      error: 'Invalid credentials. Unauthorized access denied. Please check your role email and password or register an account first.',
+      error: 'Invalid email or password. Please check your credentials or register a new account.',
     });
     return;
   }
 
+  if (account.status === 'Suspended') {
+    res.status(403).json({
+      error: 'This account has been suspended by an administrator. Contact Admin support.',
+    });
+    return;
+  }
+
+  // Strictly verify assigned role against backend database record (never trust frontend dropdown alone)
+  if (account.role !== requestedRole) {
+    res.status(403).json({
+      error: `Incorrect role selected. This account is assigned to "${formatRoleLabel(account.role)}", not "${formatRoleLabel(requestedRole)}". Please select your assigned role.`,
+    });
+    return;
+  }
+
+  if (phone && String(phone).trim()) {
+    account.phone = String(phone).trim();
+  }
+
+  const token = createServerSession(account.id);
+
   res.json({
     success: true,
-    sessionUser: {
-      id: account.id,
-      firstName: account.firstName,
-      lastName: account.lastName,
-      email: account.email,
-      phone: phone || account.phone,
-      role: account.role,
-    },
+    token,
+    sessionUser: toSafeSessionUser(account, token),
     sosMessages: SOS_MESSAGES_STORE,
   });
 });
 
+app.get('/api/v1/auth/session', (req, res) => {
+  const account = getAuthenticatedAccount(req);
+  if (!account) {
+    res.status(401).json({ authenticated: false, error: 'Session expired or invalid.' });
+    return;
+  }
+  const authHeader = req.headers.authorization;
+  const token =
+    typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : (req.headers['x-session-token'] as string | undefined)?.trim();
+
+  res.json({
+    authenticated: true,
+    sessionUser: toSafeSessionUser(account, token),
+    sosMessages: SOS_MESSAGES_STORE,
+  });
+});
+
+app.post('/api/v1/auth/logout', (req, res) => {
+  const authHeader = req.headers.authorization;
+  const bearerToken =
+    typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : '';
+  const headerToken = (req.headers['x-session-token'] as string | undefined)?.trim() || '';
+  const token = bearerToken || headerToken;
+  if (token) {
+    ACTIVE_SESSIONS.delete(token);
+  }
+  res.json({ success: true });
+});
+
 app.post('/api/v1/auth/register', (req, res) => {
-  const { firstName, lastName, email, phone, password, confirmPassword, role, rolePasscode } = req.body;
+  const { firstName, lastName, email, phone, password, confirmPassword, role } = req.body;
 
   if (!firstName || !lastName || !email || !phone || !password) {
-    res.status(400).json({ error: 'All registration fields (name, email, phone, password) are required.' });
+    res.status(400).json({
+      error: 'All registration fields (name, email, phone, password) are required.',
+    });
+    return;
+  }
+
+  if (String(password).length < 6) {
+    res.status(400).json({ error: 'Password must be at least 6 characters long.' });
     return;
   }
 
@@ -943,38 +1259,38 @@ app.post('/api/v1/auth/register', (req, res) => {
     return;
   }
 
+  const requestedRole = role !== undefined && String(role).trim() !== '' ? normalizeRoleInput(role) : 'Citizen';
+  if (!requestedRole) {
+    res.status(400).json({ error: 'Invalid role selected.' });
+    return;
+  }
+
+  // CRITICAL SECURITY: Public registration is restricted strictly to User (General Public / Citizen)
+  if (requestedRole !== 'Citizen') {
+    res.status(403).json({
+      error:
+        'Public registration is restricted to User (General Public) accounts only. Staff and Admin roles can only be created or assigned by an authorized administrator.',
+    });
+    return;
+  }
+
   const normalizedEmail = String(email).trim().toLowerCase();
-  const requestedRole = (role || 'Citizen') as RegisteredAccount['role'];
-
-  // Enforce role password protection if registering as privileged staff role
-  if (requestedRole === 'Admin' && rolePasscode !== 'FG-Admin#2026!' && password !== 'FG-Admin#2026!') {
-    res.status(403).json({
-      error: 'Admin registration requires the Admin authorization password (FG-Admin#2026!).',
-    });
-    return;
-  }
-  if (requestedRole === 'Forecast Officer' && rolePasscode !== 'FG-Forecast#2026!' && password !== 'FG-Forecast#2026!') {
-    res.status(403).json({
-      error: 'Forecast Officer registration requires the Forecast authorization password (FG-Forecast#2026!).',
-    });
-    return;
-  }
-  if (requestedRole === 'Volunteer' && rolePasscode !== 'FG-Volunteer#2026!' && password !== 'FG-Volunteer#2026!') {
-    res.status(403).json({
-      error: 'Volunteer registration requires the Volunteer authorization password (FG-Volunteer#2026!).',
-    });
-    return;
-  }
-  if (requestedRole === 'Authority' && rolePasscode !== 'FG-Disaster#2026!' && password !== 'FG-Disaster#2026!') {
-    res.status(403).json({
-      error: 'Disaster Authority registration requires the Authority authorization password (FG-Disaster#2026!).',
-    });
-    return;
-  }
-
-  const existingIndex = REGISTERED_ACCOUNTS.findIndex(
+  const existingAccount = REGISTERED_ACCOUNTS.find(
     (acc) => acc.email.toLowerCase() === normalizedEmail
   );
+
+  if (existingAccount) {
+    res.status(409).json({
+      error: 'An account with this email already exists. Please log in with your assigned role.',
+    });
+    return;
+  }
+
+  const rawDistrict = String(req.body.district || 'sylhet').toLowerCase();
+  const validDistricts = ['sylhet', 'dhaka', 'sunamganj', 'dinajpur'] as const;
+  const district = (validDistricts as readonly string[]).includes(rawDistrict)
+    ? (rawDistrict as RegisteredAccount['district'])
+    : 'sylhet';
 
   const newAccount: RegisteredAccount = {
     id: `acc_${Date.now()}`,
@@ -984,43 +1300,182 @@ app.post('/api/v1/auth/register', (req, res) => {
     phone: String(phone).trim(),
     password: String(password),
     role: requestedRole,
+    status: 'Active',
+    district,
+    emailVerified: true,
+    notificationPreferences: { sosAlerts: true, statusUpdates: true, emergencyBroadcasts: true },
   };
 
-  if (existingIndex >= 0) {
-    REGISTERED_ACCOUNTS[existingIndex] = newAccount;
-  } else {
-    REGISTERED_ACCOUNTS.push(newAccount);
-  }
+  REGISTERED_ACCOUNTS.push(newAccount);
+  const token = createServerSession(newAccount.id);
 
   res.json({
     success: true,
-    sessionUser: {
-      id: newAccount.id,
-      firstName: newAccount.firstName,
-      lastName: newAccount.lastName,
-      email: newAccount.email,
-      phone: newAccount.phone,
-      role: newAccount.role,
-    },
+    token,
+    sessionUser: toSafeSessionUser(newAccount, token),
     sosMessages: SOS_MESSAGES_STORE,
   });
 });
 
-// Protected SOS Messages endpoint: only returns SOS messages if user is logged in & registered
-app.get('/api/v1/sos-messages', (req, res) => {
-  const authEmail = (req.headers['x-auth-email'] as string)?.trim().toLowerCase();
-  if (!authEmail) {
-    res.status(403).json({
-      error: 'Unauthorized: You must Register and Login to receive SOS messages.',
-      sosMessages: [],
-    });
+// Admin-Protected User & Role Management Endpoints
+app.get('/api/v1/admin/users', (req, res) => {
+  const adminAccount = getAuthenticatedAccount(req);
+  if (!adminAccount || adminAccount.role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden: Admin authentication required.' });
     return;
   }
 
-  const verifiedUser = REGISTERED_ACCOUNTS.find((a) => a.email.toLowerCase() === authEmail);
+  res.json({
+    users: REGISTERED_ACCOUNTS.map((u) => ({
+      id: u.id,
+      ownerId: 'system',
+      firstName: u.firstName,
+      lastName: u.lastName,
+      displayRole: u.role,
+      status: u.status,
+      email: u.email,
+      phone: u.phone,
+    })),
+  });
+});
+
+app.post('/api/v1/admin/users', (req, res) => {
+  const adminAccount = getAuthenticatedAccount(req);
+  if (!adminAccount || adminAccount.role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden: Only authorized Admins can create Admin or staff accounts.' });
+    return;
+  }
+
+  const { firstName, lastName, email, phone, password, role } = req.body;
+  if (!firstName || !lastName || !email || !phone || !password || !role) {
+    res.status(400).json({ error: 'All fields are required to create a user account.' });
+    return;
+  }
+
+  const targetRole = normalizeRoleInput(role);
+  if (!targetRole) {
+    res.status(400).json({ error: 'Invalid role specified.' });
+    return;
+  }
+
+  const normalizedEmail = String(email).trim().toLowerCase();
+  if (REGISTERED_ACCOUNTS.some((a) => a.email.toLowerCase() === normalizedEmail)) {
+    res.status(409).json({ error: 'An account with this email already exists.' });
+    return;
+  }
+
+  const created: RegisteredAccount = {
+    id: `acc_${Date.now()}`,
+    firstName: String(firstName).trim(),
+    lastName: String(lastName).trim(),
+    email: normalizedEmail,
+    phone: String(phone).trim(),
+    password: String(password),
+    role: targetRole,
+    status: 'Active',
+    district: 'sylhet',
+    emailVerified: true,
+    notificationPreferences: { sosAlerts: true, statusUpdates: true, emergencyBroadcasts: true },
+  };
+  REGISTERED_ACCOUNTS.push(created);
+
+  res.json({
+    success: true,
+    user: {
+      id: created.id,
+      ownerId: 'system',
+      firstName: created.firstName,
+      lastName: created.lastName,
+      displayRole: created.role,
+      status: created.status,
+      email: created.email,
+      phone: created.phone,
+    },
+  });
+});
+
+app.patch('/api/v1/admin/users/:id', (req, res) => {
+  const adminAccount = getAuthenticatedAccount(req);
+  if (!adminAccount || adminAccount.role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden: Only authorized Admins can modify user roles or status.' });
+    return;
+  }
+
+  const target = REGISTERED_ACCOUNTS.find((u) => u.id === req.params.id);
+  if (!target) {
+    res.status(404).json({ error: 'User account not found.' });
+    return;
+  }
+
+  if (req.body.role !== undefined) {
+    const nextRole = normalizeRoleInput(req.body.role);
+    if (!nextRole) {
+      res.status(400).json({ error: 'Invalid role specified.' });
+      return;
+    }
+    target.role = nextRole;
+  }
+
+  if (req.body.status === 'Active' || req.body.status === 'Suspended') {
+    if (target.id === adminAccount.id && req.body.status === 'Suspended') {
+      res.status(400).json({ error: 'Cannot suspend your own active Admin session.' });
+      return;
+    }
+    target.status = req.body.status;
+  }
+
+  res.json({
+    success: true,
+    user: {
+      id: target.id,
+      ownerId: 'system',
+      firstName: target.firstName,
+      lastName: target.lastName,
+      displayRole: target.role,
+      status: target.status,
+      email: target.email,
+      phone: target.phone,
+    },
+  });
+});
+
+app.delete('/api/v1/admin/users/:id', (req, res) => {
+  const adminAccount = getAuthenticatedAccount(req);
+  if (!adminAccount || adminAccount.role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden: Only authorized Admins can delete user accounts.' });
+    return;
+  }
+
+  if (req.params.id === adminAccount.id) {
+    res.status(400).json({ error: 'Cannot delete your own active Admin account.' });
+    return;
+  }
+
+  const idx = REGISTERED_ACCOUNTS.findIndex((u) => u.id === req.params.id);
+  if (idx === -1) {
+    res.status(404).json({ error: 'User account not found.' });
+    return;
+  }
+
+  REGISTERED_ACCOUNTS.splice(idx, 1);
+  res.json({ success: true });
+});
+
+// Protected SOS Messages & Automatic SOS Email Notification Endpoints
+function extractDistrictKey(locationStr: string): string {
+  const lower = String(locationStr || '').toLowerCase();
+  if (lower.includes('dhaka')) return 'dhaka';
+  if (lower.includes('sunamganj')) return 'sunamganj';
+  if (lower.includes('dinajpur')) return 'dinajpur';
+  if (lower.includes('sylhet')) return 'sylhet';
+  return 'sylhet';
+}
+
+app.get('/api/v1/sos-messages', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
   if (!verifiedUser) {
     res.status(403).json({
-      error: 'Account not registered. Please complete registration and login to receive SOS messages.',
+      error: 'Unauthorized: You must Register and Login with a valid session to receive SOS messages.',
       sosMessages: [],
     });
     return;
@@ -1029,46 +1484,1191 @@ app.get('/api/v1/sos-messages', (req, res) => {
   res.json({
     authenticated: true,
     sosMessages: SOS_MESSAGES_STORE,
+    sosRequests: SOS_REQUESTS_STORE,
   });
 });
 
-app.post('/api/v1/sos-messages', (req, res) => {
-  const authEmail = (req.headers['x-auth-email'] as string)?.trim().toLowerCase();
-  if (!authEmail) {
-    res.status(403).json({
-      error: 'Unauthorized: You must Register and Login to send or receive SOS messages.',
-    });
+app.get('/api/v1/sos-requests', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser) {
+    res.status(401).json({ error: 'Authentication required to view SOS requests.', sosRequests: [] });
     return;
   }
+  const visible =
+    verifiedUser.role === 'Citizen'
+      ? SOS_REQUESTS_STORE.filter(
+          (r) => r.requesterEmail.toLowerCase() === verifiedUser.email.toLowerCase()
+        )
+      : SOS_REQUESTS_STORE;
+  res.json({ sosRequests: visible });
+});
 
-  const verifiedUser = REGISTERED_ACCOUNTS.find((a) => a.email.toLowerCase() === authEmail);
+app.post('/api/v1/sos-messages', async (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
   if (!verifiedUser) {
     res.status(403).json({
-      error: 'Account not registered. Please register and login first.',
+      error: 'Unauthorized: You must Register and Login with a valid session to send SOS messages.',
     });
     return;
   }
 
-  const { senderName, senderPhone, location, emergencyType, message } = req.body;
+  if (verifiedUser.role !== 'Volunteer' && verifiedUser.role !== 'Admin' && verifiedUser.role !== 'Citizen') {
+    res.status(403).json({
+      error: 'Forbidden: Only User, Volunteer & SOS, or Admin accounts can dispatch SOS messages.',
+    });
+    return;
+  }
+
+  const { sosId, senderName, senderPhone, senderEmail, location, emergencyType, message } = req.body;
+  const cleanName = sanitizeHeaderText(senderName || `${verifiedUser.firstName} ${verifiedUser.lastName}`, 100);
+  const cleanPhone = sanitizeHeaderText(senderPhone || verifiedUser.phone, 40);
+  const cleanEmail = isValidEmailAddress(senderEmail) ? String(senderEmail).trim().toLowerCase() : verifiedUser.email;
+  const cleanLocation = sanitizeHeaderText(location || 'Sylhet', 100);
+  const validTypes = ['Flood Rescue', 'Emergency Help', 'Food Support', 'Medical Aid'] as const;
+  const cleanType = (validTypes as readonly string[]).includes(String(emergencyType))
+    ? (emergencyType as SosBroadcastMessage['emergencyType'])
+    : 'Flood Rescue';
+  const cleanMsg = String(
+    message || `URGENT SOS (${cleanType}): Immediate assistance requested by ${cleanName} in ${cleanLocation}.`
+  ).trim().slice(0, 500);
+
+  const submittedAt = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const recordId = sanitizeHeaderText(sosId || `sos_${Date.now()}`, 64);
+  const critical = isCriticalSosEmergency({ emergencyType: cleanType, message: cleanMsg });
+  const districtKey = extractDistrictKey(cleanLocation);
+
   const newMsg: SosBroadcastMessage = {
     id: `sos_msg_${Date.now()}`,
-    senderName: String(senderName || `${verifiedUser.firstName} ${verifiedUser.lastName}`).slice(0, 100),
-    senderPhone: String(senderPhone || verifiedUser.phone).slice(0, 40),
-    location: String(location || 'Sylhet').slice(0, 100),
-    emergencyType: emergencyType || 'Flood Rescue',
-    message: String(
-      message ||
-        `URGENT SOS (${emergencyType || 'Flood Rescue'}): Immediate assistance requested at ${location || 'Sylhet'}.`
-    ).slice(0, 300),
+    senderName: cleanName,
+    senderPhone: cleanPhone,
+    senderEmail: cleanEmail,
+    location: cleanLocation,
+    emergencyType: cleanType,
+    message: cleanMsg,
     status: 'Pending',
-    timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+    isCritical: critical,
+    timestamp: submittedAt,
+    submittedAt,
+  };
+
+  const newSosRecord: SosRequestServerRecord = {
+    id: recordId,
+    ownerId: verifiedUser.id,
+    requesterName: cleanName,
+    requesterPhone: cleanPhone,
+    requesterEmail: cleanEmail,
+    location: cleanLocation,
+    emergencyType: cleanType,
+    description: cleanMsg,
+    status: 'Pending',
+    isCritical: critical,
+    submittedAt,
   };
 
   SOS_MESSAGES_STORE.unshift(newMsg);
+  SOS_REQUESTS_STORE.unshift(newSosRecord);
+
+  // Automatic SOS Email Notifications to relevant Volunteers & Disaster Management (Authority) officers
+  const matchedOfficers = REGISTERED_ACCOUNTS.filter(
+    (acc) =>
+      acc.status === 'Active' &&
+      acc.emailVerified &&
+      (acc.role === 'Volunteer' || acc.role === 'Authority') &&
+      acc.notificationPreferences.sosAlerts &&
+      (acc.district === districtKey || acc.role === 'Authority')
+  );
+  const fallbackOfficers =
+    matchedOfficers.length > 0
+      ? matchedOfficers
+      : REGISTERED_ACCOUNTS.filter(
+          (acc) =>
+            acc.status === 'Active' &&
+            acc.emailVerified &&
+            (acc.role === 'Volunteer' || acc.role === 'Authority') &&
+            acc.notificationPreferences.sosAlerts
+        );
+
+  const emailDispatchResults = [];
+  const priorityLabel = critical ? 'CRITICAL EMERGENCY' : 'Standard Priority';
+  const subjectPrefix = critical ? '[CRITICAL SOS ALERT]' : '[SOS ALERT]';
+  const officerSubject = `${subjectPrefix} ${cleanType} — ${cleanLocation} (${cleanName})`;
+  const officerText = [
+    `Emergency SOS Alert Received (${priorityLabel})`,
+    `SOS Type: ${cleanType}`,
+    `Citizen Name: ${cleanName}`,
+    `Location: ${cleanLocation}`,
+    `Phone Number: ${cleanPhone}`,
+    `Submitted At: ${submittedAt}`,
+    `Emergency Description: ${cleanMsg}`,
+    '',
+    'Please coordinate response immediately in the Volunteer & SOS Dashboard.',
+  ].join('\n');
+
+  const officerHtml = buildFloodGuardEmailHtml({
+    title: `${critical ? 'CRITICAL ' : ''}SOS Alert: ${cleanType}`,
+    subtitle: `${cleanLocation} · Submitted at ${submittedAt}`,
+    priority: critical ? 'Critical' : 'Normal',
+    emailType: 'SOS Alert',
+    bodyText: cleanMsg,
+    details: [
+      { label: 'Priority', value: priorityLabel },
+      { label: 'SOS Type', value: cleanType },
+      { label: 'Citizen Name', value: cleanName },
+      { label: 'Location', value: cleanLocation },
+      { label: 'Phone Number', value: cleanPhone },
+      { label: 'Submission Time', value: submittedAt },
+    ],
+  });
+
+  for (const officer of fallbackOfficers) {
+    const dedupeKey = `sos_new:${cleanType}:${cleanLocation}:${cleanEmail}:${officer.email}`;
+    const resDispatch = await queueAndSendEmail({
+      ownerId: verifiedUser.id,
+      recipientEmail: officer.email,
+      recipientName: `${officer.firstName} ${officer.lastName}`,
+      recipientRole: officer.role,
+      subject: officerSubject,
+      message: officerText,
+      htmlBody: officerHtml,
+      emailType: 'SOS Alert',
+      priority: critical ? 'Critical' : 'Normal',
+      district: districtKey,
+      relatedSosId: newSosRecord.id,
+      dedupeKey,
+    });
+    if (resDispatch.log) {
+      emailDispatchResults.push(toPublicEmailLog(resDispatch.log));
+    }
+  }
+
+  // Send initial Pending acknowledgement email to citizen if opted-in
+  const citizenAccount = REGISTERED_ACCOUNTS.find(
+    (a) => a.email.toLowerCase() === cleanEmail.toLowerCase()
+  );
+  if (!citizenAccount || citizenAccount.notificationPreferences.statusUpdates) {
+    const statusSubject = `[FloodGuard SOS Received] Status: Pending (${cleanLocation})`;
+    const statusText = `Dear ${cleanName},\n\nYour ${cleanType} SOS request for ${cleanLocation} has been received at ${submittedAt} and is currently Pending volunteer assignment.\n\nDescription: ${cleanMsg}`;
+    const ackRes = await queueAndSendEmail({
+      ownerId: verifiedUser.id,
+      recipientEmail: cleanEmail,
+      recipientName: cleanName,
+      recipientRole: 'Citizen',
+      subject: statusSubject,
+      message: statusText,
+      htmlBody: buildFloodGuardEmailHtml({
+        title: 'SOS Request Logged — Status: Pending',
+        subtitle: `${cleanType} · ${cleanLocation}`,
+        priority: critical ? 'Critical' : 'Normal',
+        emailType: 'SOS Status Update',
+        bodyText: statusText,
+        details: [
+          { label: 'Current Status', value: 'Pending' },
+          { label: 'SOS Type', value: cleanType },
+          { label: 'Location', value: cleanLocation },
+          { label: 'Submitted At', value: submittedAt },
+        ],
+      }),
+      emailType: 'SOS Status Update',
+      priority: critical ? 'Critical' : 'Normal',
+      district: districtKey,
+      relatedSosId: newSosRecord.id,
+      dedupeKey: `sos_status:${newSosRecord.id}:Pending:${cleanEmail}`,
+    });
+    if (ackRes.log) {
+      emailDispatchResults.push(toPublicEmailLog(ackRes.log));
+    }
+  }
+
   res.json({
     success: true,
     newMessage: newMsg,
+    sosRequest: newSosRecord,
     sosMessages: SOS_MESSAGES_STORE,
+    sosRequests: SOS_REQUESTS_STORE,
+    emailDispatchResults,
+  });
+});
+
+app.patch('/api/v1/sos-requests/:id/status', async (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser || (verifiedUser.role !== 'Volunteer' && verifiedUser.role !== 'Authority' && verifiedUser.role !== 'Admin')) {
+    res.status(403).json({
+      error: 'Forbidden: Only Volunteer & SOS, Disaster Management, or Admin accounts can update SOS status.',
+    });
+    return;
+  }
+
+  const validStatuses = ['Pending', 'Accepted', 'In Progress', 'Completed'] as const;
+  const nextStatus = String(req.body.status || '').trim() as SosRequestServerRecord['status'];
+  if (!(validStatuses as readonly string[]).includes(nextStatus)) {
+    res.status(400).json({ error: 'Invalid SOS status. Must be Pending, Accepted, In Progress, or Completed.' });
+    return;
+  }
+
+  let target = SOS_REQUESTS_STORE.find((r) => r.id === req.params.id);
+  if (!target) {
+    // Allow updating client-seeded SOS item synced via ID/name
+    const fallbackName = sanitizeHeaderText(req.body.requesterName || 'Citizen', 100);
+    const fallbackLocation = sanitizeHeaderText(req.body.location || 'Sylhet', 100);
+    const fallbackEmail = isValidEmailAddress(req.body.requesterEmail)
+      ? String(req.body.requesterEmail).trim().toLowerCase()
+      : 'user@floodguard.gov.bd';
+    target = {
+      id: sanitizeHeaderText(req.params.id, 64),
+      ownerId: verifiedUser.id,
+      requesterName: fallbackName,
+      requesterPhone: sanitizeHeaderText(req.body.requesterPhone || '01711000111', 40),
+      requesterEmail: fallbackEmail,
+      location: fallbackLocation,
+      emergencyType: req.body.emergencyType || 'Flood Rescue',
+      description: sanitizeHeaderText(req.body.description || 'Emergency SOS request', 400),
+      status: 'Pending',
+      isCritical: isCriticalSosEmergency({ emergencyType: req.body.emergencyType || 'Flood Rescue' }),
+      submittedAt: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+    };
+    SOS_REQUESTS_STORE.unshift(target);
+  }
+
+  if (target.status === 'Completed' && verifiedUser.role !== 'Admin') {
+    res.status(409).json({ error: 'Completed SOS requests are locked in terminal state.' });
+    return;
+  }
+
+  const assignedTeam =
+    sanitizeHeaderText(req.body.assignedVolunteer || '', 120) ||
+    `${verifiedUser.firstName} ${verifiedUser.lastName} (${formatRoleLabel(verifiedUser.role)} · ${verifiedUser.phone})`;
+
+  target.status = nextStatus;
+  if (nextStatus !== 'Pending') {
+    target.assignedVolunteer = assignedTeam;
+  }
+
+  // Sync matching SOS message feed entry if one shares requester & location
+  for (const msg of SOS_MESSAGES_STORE) {
+    if (
+      msg.id === target.id ||
+      (msg.senderName === target.requesterName && msg.location.toLowerCase().includes(target.location.toLowerCase()))
+    ) {
+      msg.status = nextStatus;
+      if (nextStatus !== 'Pending') {
+        msg.assignedVolunteer = assignedTeam;
+      }
+    }
+  }
+
+  // Send automatic SOS Status Update email to the citizen (respecting preferences & deduplicating)
+  let emailLog = null;
+  let skippedNotificationReason = '';
+  const citizenAccount = REGISTERED_ACCOUNTS.find(
+    (a) => a.email.toLowerCase() === target!.requesterEmail.toLowerCase()
+  );
+
+  if (citizenAccount && !citizenAccount.notificationPreferences.statusUpdates) {
+    skippedNotificationReason = 'Citizen has opted out of SOS status update emails.';
+  } else if (isValidEmailAddress(target.requesterEmail)) {
+    const nowTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const statusSubject = `[FloodGuard SOS Update] Your ${target.emergencyType} request is now ${nextStatus}`;
+    const teamText =
+      nextStatus === 'Pending'
+        ? 'Awaiting assignment to nearest available volunteer unit.'
+        : assignedTeam;
+    const statusBody = [
+      `Dear ${target.requesterName},`,
+      '',
+      `Your emergency ${target.emergencyType} SOS request for ${target.location} has been updated to: ${nextStatus}.`,
+      `Assigned Response Team: ${teamText}`,
+      `Updated At: ${nowTime}`,
+      '',
+      nextStatus === 'Completed'
+        ? 'Your emergency request has been marked Completed. If you still need assistance, please submit a new SOS request.'
+        : 'Our response team is actively coordinating your support. Keep your phone reachable.',
+    ].join('\n');
+
+    const dispatchRes = await queueAndSendEmail({
+      ownerId: verifiedUser.id,
+      recipientEmail: target.requesterEmail,
+      recipientName: target.requesterName,
+      recipientRole: 'Citizen',
+      subject: statusSubject,
+      message: statusBody,
+      htmlBody: buildFloodGuardEmailHtml({
+        title: `SOS Status Updated: ${nextStatus}`,
+        subtitle: `${target.emergencyType} · ${target.location}`,
+        priority: target.isCritical ? 'Critical' : 'Normal',
+        emailType: 'SOS Status Update',
+        bodyText: statusBody,
+        details: [
+          { label: 'New Status', value: nextStatus },
+          { label: 'SOS Type', value: target.emergencyType },
+          { label: 'Location', value: target.location },
+          { label: 'Assigned Team', value: teamText },
+          { label: 'Updated At', value: nowTime },
+        ],
+      }),
+      emailType: 'SOS Status Update',
+      priority: target.isCritical ? 'Critical' : 'Normal',
+      district: extractDistrictKey(target.location),
+      relatedSosId: target.id,
+      dedupeKey: `sos_status:${target.id}:${nextStatus}:${target.requesterEmail}`,
+    });
+
+    if (dispatchRes.skippedDuplicate) {
+      skippedNotificationReason = 'Duplicate status update notification suppressed.';
+    } else if (dispatchRes.log) {
+      emailLog = toPublicEmailLog(dispatchRes.log);
+    }
+  } else {
+    skippedNotificationReason = 'Requester has no valid email address on file.';
+  }
+
+  res.json({
+    success: true,
+    sosRequest: target,
+    sosRequests: SOS_REQUESTS_STORE,
+    sosMessages: SOS_MESSAGES_STORE,
+    emailLog,
+    skippedNotificationReason: skippedNotificationReason || undefined,
+  });
+});
+
+// 8. Shelter Finder Capacity Management Endpoints (Readable by public; editable by Volunteer & Admin)
+interface ShelterRecord {
+  id: string;
+  ownerId: string;
+  name: string;
+  district: 'sylhet' | 'dinajpur' | 'dhaka' | 'sunamganj';
+  area: string;
+  capacity: number;
+  occupancy: number;
+  elevation: number;
+  status: 'Available' | 'Near Capacity' | 'Full';
+}
+
+const SHELTERS_STORE: ShelterRecord[] = [
+  { id: 'sh_comp_1', ownerId: 'local', name: 'Companiganj High School', district: 'sylhet', area: 'companiganj', capacity: 450, occupancy: 280, elevation: 11.4, status: 'Available' },
+  { id: 'sh_comp_2', ownerId: 'local', name: 'Companiganj Govt College', district: 'sylhet', area: 'companiganj', capacity: 600, occupancy: 410, elevation: 12.0, status: 'Available' },
+  { id: 'sh_comp_3', ownerId: 'local', name: 'Community Flood Center', district: 'sylhet', area: 'companiganj', capacity: 350, occupancy: 315, elevation: 11.8, status: 'Near Capacity' },
+  { id: 'sh_jain_1', ownerId: 'local', name: 'Jaintapur High School', district: 'sylhet', area: 'jaintapur', capacity: 500, occupancy: 210, elevation: 13.2, status: 'Available' },
+  { id: 'sh_jain_2', ownerId: 'local', name: 'Jaintapur Govt Primary School', district: 'sylhet', area: 'jaintapur', capacity: 300, occupancy: 145, elevation: 12.5, status: 'Available' },
+  { id: 'sh_jain_3', ownerId: 'local', name: 'Union Parishad Shelter', district: 'sylhet', area: 'jaintapur', capacity: 400, occupancy: 190, elevation: 12.8, status: 'Available' },
+  { id: 'sh_biral_1', ownerId: 'local', name: 'Biral Pilot High School', district: 'dinajpur', area: 'biral', capacity: 500, occupancy: 175, elevation: 36.0, status: 'Available' },
+  { id: 'sh_biral_2', ownerId: 'local', name: 'Biral College', district: 'dinajpur', area: 'biral', capacity: 650, occupancy: 230, elevation: 36.4, status: 'Available' },
+  { id: 'sh_biral_3', ownerId: 'local', name: 'Biral Community Center', district: 'dinajpur', area: 'biral', capacity: 300, occupancy: 110, elevation: 35.8, status: 'Available' },
+  { id: 'sh_biram_1', ownerId: 'local', name: 'Birampur High School', district: 'dinajpur', area: 'birampur', capacity: 450, occupancy: 160, elevation: 35.5, status: 'Available' },
+  { id: 'sh_biram_2', ownerId: 'local', name: 'Birampur College', district: 'dinajpur', area: 'birampur', capacity: 550, occupancy: 205, elevation: 36.1, status: 'Available' },
+  { id: 'sh_biram_3', ownerId: 'local', name: 'Flood Protection Shelter', district: 'dinajpur', area: 'birampur', capacity: 400, occupancy: 130, elevation: 36.8, status: 'Available' },
+];
+
+function computeShelterStatus(occupancy: number, capacity: number): ShelterRecord['status'] {
+  if (occupancy >= capacity) return 'Full';
+  if (occupancy >= capacity * 0.85) return 'Near Capacity';
+  return 'Available';
+}
+
+app.get('/api/v1/shelters', (_req, res) => {
+  res.json({ shelters: SHELTERS_STORE });
+});
+
+app.patch('/api/v1/shelters/:id', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser || (verifiedUser.role !== 'Volunteer' && verifiedUser.role !== 'Admin')) {
+    res.status(403).json({
+      error: 'Forbidden: Only Volunteer & SOS or Admin accounts can manage shelter capacity.',
+    });
+    return;
+  }
+
+  const target = SHELTERS_STORE.find((s) => s.id === req.params.id);
+  if (!target) {
+    res.status(404).json({ error: 'Shelter not found.' });
+    return;
+  }
+
+  const nextCapacity =
+    req.body.capacity !== undefined
+      ? Math.min(50000, Math.max(1, Math.round(Number(req.body.capacity))))
+      : target.capacity;
+  const rawOcc =
+    req.body.occupancy !== undefined ? Math.round(Number(req.body.occupancy)) : target.occupancy;
+
+  if (Number.isNaN(nextCapacity) || Number.isNaN(rawOcc)) {
+    res.status(400).json({ error: 'Capacity and occupancy must be valid numbers.' });
+    return;
+  }
+
+  const nextOccupancy = Math.min(nextCapacity, Math.max(0, rawOcc));
+  target.capacity = nextCapacity;
+  target.occupancy = nextOccupancy;
+  target.status = computeShelterStatus(nextOccupancy, nextCapacity);
+
+  res.json({
+    success: true,
+    shelter: target,
+    shelters: SHELTERS_STORE,
+  });
+});
+
+app.post('/api/v1/shelters', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser || (verifiedUser.role !== 'Volunteer' && verifiedUser.role !== 'Admin')) {
+    res.status(403).json({
+      error: 'Forbidden: Only Volunteer & SOS or Admin accounts can add shelters.',
+    });
+    return;
+  }
+
+  const { name, district, area, capacity, occupancy = 0, elevation = 12.0 } = req.body;
+  const validDistricts = ['sylhet', 'dinajpur', 'dhaka', 'sunamganj'] as const;
+  const normalizedDistrict = String(district || 'sylhet').toLowerCase() as ShelterRecord['district'];
+  if (!name || !area || !validDistricts.includes(normalizedDistrict)) {
+    res.status(400).json({ error: 'Valid shelter name, district, and area are required.' });
+    return;
+  }
+
+  const capNum = Math.min(50000, Math.max(1, Math.round(Number(capacity) || 300)));
+  const occNum = Math.min(capNum, Math.max(0, Math.round(Number(occupancy) || 0)));
+  const elevNum = Math.min(5000, Math.max(0, Number(elevation) || 12.0));
+
+  const created: ShelterRecord = {
+    id: `sh_${Date.now()}`,
+    ownerId: 'local',
+    name: String(name).trim().slice(0, 120),
+    district: normalizedDistrict,
+    area: String(area).trim().toLowerCase().slice(0, 60),
+    capacity: capNum,
+    occupancy: occNum,
+    elevation: Number(elevNum.toFixed(1)),
+    status: computeShelterStatus(occNum, capNum),
+  };
+
+  SHELTERS_STORE.unshift(created);
+  res.json({
+    success: true,
+    shelter: created,
+    shelters: SHELTERS_STORE,
+  });
+});
+
+// 9. User Shelter Booking Endpoints (Authenticated Users: minimum 2, maximum 5 persons per booking)
+interface ShelterBookingRecord {
+  id: string;
+  ownerId: string;
+  shelterId: string;
+  shelterName: string;
+  bookerName: string;
+  bookerPhone: string;
+  bookerEmail: string;
+  persons: number;
+  status: 'Confirmed' | 'Cancelled';
+  timestamp: string;
+}
+
+const SHELTER_BOOKINGS_STORE: ShelterBookingRecord[] = [];
+
+app.get('/api/v1/shelter-bookings', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser) {
+    res.status(401).json({ error: 'Authentication required to view shelter bookings.', bookings: [] });
+    return;
+  }
+
+  const isStaff = verifiedUser.role === 'Volunteer' || verifiedUser.role === 'Admin';
+  const visible = isStaff
+    ? SHELTER_BOOKINGS_STORE
+    : SHELTER_BOOKINGS_STORE.filter(
+        (b) => b.bookerEmail.toLowerCase() === verifiedUser.email.toLowerCase()
+      );
+
+  res.json({ bookings: visible });
+});
+
+app.post('/api/v1/shelters/:id/book', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser) {
+    res.status(401).json({
+      error: 'Please log in or register as a User to book emergency shelter space.',
+    });
+    return;
+  }
+
+  const target = SHELTERS_STORE.find((s) => s.id === req.params.id);
+  if (!target) {
+    res.status(404).json({ error: 'Selected shelter was not found.' });
+    return;
+  }
+
+  const parsedPersons = Number(req.body.persons);
+  if (!Number.isInteger(parsedPersons) || parsedPersons < 2 || parsedPersons > 5) {
+    res.status(400).json({
+      error: 'Shelter booking requires a minimum of 2 persons and a maximum of 5 persons per booking.',
+    });
+    return;
+  }
+
+  const remaining = target.capacity - target.occupancy;
+  if (remaining < parsedPersons) {
+    res.status(409).json({
+      error: `Not enough space at ${target.name}. Only ${Math.max(0, remaining)} spot(s) remaining.`,
+    });
+    return;
+  }
+
+  target.occupancy += parsedPersons;
+  target.status = computeShelterStatus(target.occupancy, target.capacity);
+
+  const bookerName =
+    String(req.body.bookerName || '').trim() || `${verifiedUser.firstName} ${verifiedUser.lastName}`;
+  const bookerPhone = String(req.body.bookerPhone || '').trim() || verifiedUser.phone;
+
+  const newBooking: ShelterBookingRecord = {
+    id: `bk_${Date.now()}`,
+    ownerId: verifiedUser.id,
+    shelterId: target.id,
+    shelterName: target.name,
+    bookerName: bookerName.slice(0, 100),
+    bookerPhone: bookerPhone.slice(0, 40),
+    bookerEmail: verifiedUser.email,
+    persons: parsedPersons,
+    status: 'Confirmed',
+    timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+  };
+
+  SHELTER_BOOKINGS_STORE.unshift(newBooking);
+
+  const isStaff = verifiedUser.role === 'Volunteer' || verifiedUser.role === 'Admin';
+  const visible = isStaff
+    ? SHELTER_BOOKINGS_STORE
+    : SHELTER_BOOKINGS_STORE.filter(
+        (b) => b.bookerEmail.toLowerCase() === verifiedUser.email.toLowerCase()
+      );
+
+  res.json({
+    success: true,
+    booking: newBooking,
+    shelter: target,
+    shelters: SHELTERS_STORE,
+    bookings: visible,
+  });
+});
+
+// 10. Email Notification, Broadcast, Template, Preference & Webhook Endpoints
+function maskEmailForNonAdmin(email: string): string {
+  const parts = email.split('@');
+  if (parts.length !== 2) return '***';
+  const local = parts[0];
+  const visible = local.slice(0, Math.min(2, local.length));
+  return `${visible}***@${parts[1]}`;
+}
+
+app.get('/api/v1/emails', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser) {
+    res.status(401).json({ error: 'Authentication required to view email logs.' });
+    return;
+  }
+
+  if (verifiedUser.role === 'Forecast Officer') {
+    res.status(403).json({ error: 'Forbidden: Forecast Officer role cannot access SOS or citizen email logs.' });
+    return;
+  }
+
+  let scoped = EMAIL_LOGS_STORE;
+  if (verifiedUser.role === 'Citizen') {
+    scoped = EMAIL_LOGS_STORE.filter(
+      (l) => l.recipientEmail.toLowerCase() === verifiedUser.email.toLowerCase()
+    );
+  }
+
+  const statusFilter = String(req.query.status || 'all').toLowerCase();
+  const typeFilter = String(req.query.emailType || 'all');
+  const search = String(req.query.search || '').trim().toLowerCase();
+
+  let filtered = scoped;
+  if (statusFilter !== 'all') {
+    filtered = filtered.filter((l) => l.status === statusFilter);
+  }
+  if (typeFilter !== 'all') {
+    filtered = filtered.filter((l) => l.emailType === typeFilter);
+  }
+
+  const publicLogs = filtered
+    .map((l) => {
+      const pub = toPublicEmailLog(l);
+      // Protect private citizen PII from unauthorized staff roles on broadcast/citizen logs
+      if (
+        verifiedUser.role === 'Volunteer' &&
+        pub.recipientRole === 'Citizen' &&
+        pub.emailType === 'Emergency Broadcast'
+      ) {
+        pub.recipientEmail = maskEmailForNonAdmin(pub.recipientEmail);
+        pub.recipientName = 'Verified Citizen';
+      }
+      return pub;
+    })
+    .filter((l) => {
+      if (!search) return true;
+      return (
+        l.recipientEmail.toLowerCase().includes(search) ||
+        l.recipientName.toLowerCase().includes(search) ||
+        l.subject.toLowerCase().includes(search) ||
+        l.message.toLowerCase().includes(search)
+      );
+    });
+
+  res.json({
+    emails: publicLogs,
+    metrics: computeEmailMetrics(scoped),
+  });
+});
+
+app.post('/api/v1/emails/send', async (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (
+    !verifiedUser ||
+    (verifiedUser.role !== 'Volunteer' &&
+      verifiedUser.role !== 'Authority' &&
+      verifiedUser.role !== 'Admin')
+  ) {
+    res.status(403).json({
+      error: 'Forbidden: Only Volunteer & SOS, Disaster Management, or Admin accounts can send operational emails.',
+    });
+    return;
+  }
+
+  const {
+    recipientEmail,
+    recipientName,
+    subject,
+    message,
+    emailType = 'Operational',
+    priority = 'Normal',
+    district = 'All',
+    relatedSosId = '',
+  } = req.body;
+
+  if (!isValidEmailAddress(recipientEmail)) {
+    res.status(400).json({ error: 'Please enter a valid recipient email address.' });
+    return;
+  }
+
+  const validTypes: EmailType[] = ['SOS Alert', 'SOS Status Update', 'Emergency Broadcast', 'Operational'];
+  const requestedType: EmailType = validTypes.includes(emailType) ? emailType : 'Operational';
+
+  // Volunteers can send permitted SOS/operational updates, NOT Emergency Broadcasts
+  if (verifiedUser.role === 'Volunteer' && requestedType === 'Emergency Broadcast') {
+    res.status(403).json({
+      error: 'Forbidden: Volunteers cannot send Emergency Broadcasts. Only Disaster Management and Admin roles are authorized.',
+    });
+    return;
+  }
+
+  const rateCheck = checkEmailRateLimit(verifiedUser.id, 1);
+  if (!rateCheck.allowed) {
+    res.status(429).json({
+      error: `Email rate limit exceeded (${EMAIL_SYSTEM_SETTINGS.rateLimitPerMinute}/min). Retry in ${rateCheck.retryAfterSeconds}s.`,
+      retryAfterSeconds: rateCheck.retryAfterSeconds,
+    });
+    return;
+  }
+
+  // Respect recipient's notification preference if they are a registered account
+  const normalizedTarget = String(recipientEmail).trim().toLowerCase();
+  const targetAccount = REGISTERED_ACCOUNTS.find((a) => a.email.toLowerCase() === normalizedTarget);
+  if (targetAccount) {
+    if (requestedType === 'SOS Alert' && !targetAccount.notificationPreferences.sosAlerts) {
+      res.status(409).json({
+        error: 'Recipient has opted out of SOS Alert email notifications in their preferences.',
+      });
+      return;
+    }
+    if (requestedType === 'SOS Status Update' && !targetAccount.notificationPreferences.statusUpdates) {
+      res.status(409).json({
+        error: 'Recipient has opted out of SOS Status Update email notifications in their preferences.',
+      });
+      return;
+    }
+  }
+
+  const cleanPriority: EmailPriority = priority === 'Critical' ? 'Critical' : 'Normal';
+  const result = await queueAndSendEmail({
+    ownerId: verifiedUser.id,
+    recipientEmail: normalizedTarget,
+    recipientName: recipientName || targetAccount?.firstName || normalizedTarget,
+    recipientRole: targetAccount?.role || 'External',
+    subject: String(subject || '').trim(),
+    message: String(message || '').trim(),
+    emailType: requestedType,
+    priority: cleanPriority,
+    district: String(district || 'All'),
+    relatedSosId: String(relatedSosId || ''),
+  });
+
+  if (result.validationError || !result.log) {
+    res.status(400).json({ error: result.validationError || 'Failed to compose email.' });
+    return;
+  }
+
+  res.status(result.log.status === 'failed' ? 502 : 200).json({
+    success: result.log.status !== 'failed',
+    error: result.log.status === 'failed' ? result.log.errorMessage : undefined,
+    log: toPublicEmailLog(result.log),
+  });
+});
+
+app.get('/api/v1/emails/broadcast-preview', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser || (verifiedUser.role !== 'Authority' && verifiedUser.role !== 'Admin')) {
+    res.status(403).json({
+      error: 'Forbidden: Only Disaster Management and Admin roles can preview emergency broadcast recipients.',
+    });
+    return;
+  }
+
+  const district = String(req.query.district || 'all').toLowerCase();
+  const citizensInDistrict = REGISTERED_ACCOUNTS.filter(
+    (a) =>
+      a.role === 'Citizen' &&
+      a.status === 'Active' &&
+      (district === 'all' || a.district === district)
+  );
+  const verifiedCitizens = citizensInDistrict.filter((a) => a.emailVerified);
+  const optedInVerifiedCitizens = verifiedCitizens.filter(
+    (a) => a.notificationPreferences.emergencyBroadcasts
+  );
+
+  // Never expose raw citizen email addresses in preview response
+  res.json({
+    district,
+    totalCitizens: citizensInDistrict.length,
+    verifiedCitizens: verifiedCitizens.length,
+    optedInVerifiedCitizens: optedInVerifiedCitizens.length,
+    skippedOptOutCount: verifiedCitizens.length - optedInVerifiedCitizens.length,
+  });
+});
+
+app.post('/api/v1/emails/broadcast', async (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser || (verifiedUser.role !== 'Authority' && verifiedUser.role !== 'Admin')) {
+    res.status(403).json({
+      error: 'Forbidden: Only Disaster Management (Authority) or Admin roles are authorized to send Emergency Broadcasts.',
+    });
+    return;
+  }
+
+  const {
+    district = 'all',
+    category = 'Flood Warning',
+    subject,
+    message,
+    includeShelters = true,
+    priority = 'Critical',
+  } = req.body;
+
+  const cleanDistrict = String(district || 'all').toLowerCase();
+  const cleanSubjectRaw = sanitizeHeaderText(subject, 200);
+  const cleanBodyRaw = String(message || '').trim().slice(0, 1800);
+  if (!cleanSubjectRaw || !cleanBodyRaw) {
+    res.status(400).json({ error: 'Broadcast subject and message are required.' });
+    return;
+  }
+
+  const matchingShelters = SHELTERS_STORE.filter(
+    (s) => (cleanDistrict === 'all' || s.district === cleanDistrict) && s.status !== 'Full'
+  );
+  const shelterSummary =
+    matchingShelters.length > 0
+      ? matchingShelters
+          .slice(0, 6)
+          .map(
+            (s) =>
+              `- ${s.name} (${s.area}, ${s.district}): ${Math.max(0, s.capacity - s.occupancy)} free spots (${s.occupancy}/${s.capacity})`
+          )
+          .join('\n')
+      : 'No open shelters matched in selected district; contact local disaster command center.';
+
+  const districtDisplay = cleanDistrict === 'all' ? 'All Flood-Prone Districts' : cleanDistrict.toUpperCase();
+  const renderedSubject = renderTemplateText(cleanSubjectRaw, { district: districtDisplay });
+  let renderedBody = renderTemplateText(cleanBodyRaw, {
+    district: districtDisplay,
+    shelterList: shelterSummary,
+  });
+  if (includeShelters && !cleanBodyRaw.includes('{{shelterList}}')) {
+    renderedBody = `${renderedBody}\n\nOpen Emergency Shelters (${districtDisplay}):\n${shelterSummary}`;
+  }
+
+  const verifiedCitizens = REGISTERED_ACCOUNTS.filter(
+    (a) =>
+      a.role === 'Citizen' &&
+      a.status === 'Active' &&
+      a.emailVerified &&
+      (cleanDistrict === 'all' || a.district === cleanDistrict)
+  );
+  const recipients = verifiedCitizens.filter((a) => a.notificationPreferences.emergencyBroadcasts);
+  const skippedOptOutCount = verifiedCitizens.length - recipients.length;
+
+  if (recipients.length === 0) {
+    res.status(400).json({
+      error: `No verified, opted-in citizens found for district "${districtDisplay}" (opted out: ${skippedOptOutCount}).`,
+    });
+    return;
+  }
+
+  const rateCheck = checkEmailRateLimit(verifiedUser.id, recipients.length);
+  if (!rateCheck.allowed) {
+    res.status(429).json({
+      error: `Email rate limit exceeded for broadcast (${recipients.length} recipients). Retry in ${rateCheck.retryAfterSeconds}s.`,
+      retryAfterSeconds: rateCheck.retryAfterSeconds,
+    });
+    return;
+  }
+
+  const cleanPriority: EmailPriority = priority === 'Normal' ? 'Normal' : 'Critical';
+  const broadcastLogs = [];
+  let sentCount = 0;
+  let failedCount = 0;
+  let skippedDuplicateCount = 0;
+
+  for (const citizen of recipients) {
+    const dedupeKey = `broadcast:${cleanDistrict}:${category}:${renderedSubject}:${citizen.email}`;
+    const dispatch = await queueAndSendEmail({
+      ownerId: verifiedUser.id,
+      recipientEmail: citizen.email,
+      recipientName: `${citizen.firstName} ${citizen.lastName}`,
+      recipientRole: 'Citizen',
+      subject: renderedSubject,
+      message: renderedBody,
+      htmlBody: buildFloodGuardEmailHtml({
+        title: `${category}: ${districtDisplay}`,
+        subtitle: `Issued by ${verifiedUser.firstName} ${verifiedUser.lastName} (${formatRoleLabel(verifiedUser.role)})`,
+        priority: cleanPriority,
+        emailType: 'Emergency Broadcast',
+        bodyText: renderedBody,
+        details: [
+          { label: 'Broadcast Category', value: String(category) },
+          { label: 'Target District', value: districtDisplay },
+          { label: 'Issued By', value: `${verifiedUser.firstName} ${verifiedUser.lastName}` },
+        ],
+      }),
+      emailType: 'Emergency Broadcast',
+      priority: cleanPriority,
+      district: cleanDistrict,
+      dedupeKey,
+    });
+
+    if (dispatch.skippedDuplicate) {
+      skippedDuplicateCount += 1;
+    } else if (dispatch.log) {
+      if (dispatch.log.status === 'failed') failedCount += 1;
+      else sentCount += 1;
+      broadcastLogs.push(toPublicEmailLog(dispatch.log));
+    }
+  }
+
+  res.json({
+    success: sentCount > 0,
+    targetedCount: recipients.length,
+    sentCount,
+    failedCount,
+    skippedDuplicateCount,
+    skippedOptOutCount,
+    logs: broadcastLogs,
+  });
+});
+
+app.post('/api/v1/emails/:id/retry', async (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (
+    !verifiedUser ||
+    (verifiedUser.role !== 'Volunteer' &&
+      verifiedUser.role !== 'Authority' &&
+      verifiedUser.role !== 'Admin')
+  ) {
+    res.status(403).json({ error: 'Forbidden: Authorized staff role required to retry email delivery.' });
+    return;
+  }
+
+  const rateCheck = checkEmailRateLimit(verifiedUser.id, 1);
+  if (!rateCheck.allowed) {
+    res.status(429).json({
+      error: `Rate limit exceeded. Retry in ${rateCheck.retryAfterSeconds}s.`,
+      retryAfterSeconds: rateCheck.retryAfterSeconds,
+    });
+    return;
+  }
+
+  const result = await retryEmailDelivery(req.params.id);
+  if (!result.log) {
+    res.status(404).json({ error: result.error || 'Email log not found.' });
+    return;
+  }
+
+  res.status(result.ok ? 200 : 502).json({
+    success: result.ok,
+    error: result.error,
+    log: toPublicEmailLog(result.log),
+  });
+});
+
+app.get('/api/v1/emails/:id/sync', async (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (
+    !verifiedUser ||
+    (verifiedUser.role !== 'Volunteer' &&
+      verifiedUser.role !== 'Authority' &&
+      verifiedUser.role !== 'Admin')
+  ) {
+    res.status(403).json({ error: 'Forbidden: Authorized staff role required to sync provider status.' });
+    return;
+  }
+
+  const result = await syncResendMessageStatus(req.params.id);
+  if (!result.log) {
+    res.status(404).json({ error: result.error || 'Email log not found.' });
+    return;
+  }
+
+  res.status(result.ok ? 200 : 400).json({
+    success: result.ok,
+    error: result.error,
+    log: toPublicEmailLog(result.log),
+  });
+});
+
+// Provider Delivery Webhook Endpoints (updates real sent -> delivered / bounced / failed states)
+app.post('/api/v1/webhooks/email/resend', (req, res) => {
+  const rawBody = (req as express.Request & { rawBody?: string }).rawBody || JSON.stringify(req.body);
+  if (!verifyWebhookSecretIfSet(req.headers, rawBody)) {
+    res.status(401).json({ error: 'Invalid webhook signature.' });
+    return;
+  }
+  const matched = applyResendWebhookEvent(req.body);
+  res.json({ received: true, matched });
+});
+
+app.post('/api/v1/webhooks/email/sendgrid', (req, res) => {
+  const rawBody = (req as express.Request & { rawBody?: string }).rawBody || JSON.stringify(req.body);
+  if (!verifyWebhookSecretIfSet(req.headers, rawBody)) {
+    res.status(401).json({ error: 'Invalid webhook signature.' });
+    return;
+  }
+  const events = Array.isArray(req.body) ? req.body : [];
+  const updatedCount = applySendGridWebhookEvents(events);
+  res.json({ received: true, updatedCount });
+});
+
+// Emergency Email Templates Endpoints (Readable by staff; editable strictly by Admin)
+app.get('/api/v1/email-templates', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (
+    !verifiedUser ||
+    (verifiedUser.role !== 'Volunteer' &&
+      verifiedUser.role !== 'Authority' &&
+      verifiedUser.role !== 'Admin')
+  ) {
+    res.status(403).json({ error: 'Forbidden: Staff or Admin authentication required.' });
+    return;
+  }
+  res.json({ templates: EMAIL_TEMPLATES_STORE });
+});
+
+app.post('/api/v1/email-templates', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser || verifiedUser.role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden: Only authorized Admins can create email templates.' });
+    return;
+  }
+
+  const { name, category = 'Custom', subject, body } = req.body;
+  const cleanName = sanitizeHeaderText(name, 120);
+  const cleanSubject = sanitizeHeaderText(subject, 200);
+  const cleanBody = String(body || '').trim().slice(0, 2000);
+  const validCategories: EmailTemplateCategory[] = [
+    'Flood Warning',
+    'Evacuation Order',
+    'Shelter Info',
+    'SOS Alert',
+    'SOS Status Update',
+    'Custom',
+  ];
+  const cleanCat: EmailTemplateCategory = validCategories.includes(category) ? category : 'Custom';
+
+  if (!cleanName || !cleanSubject || !cleanBody) {
+    res.status(400).json({ error: 'Template name, subject, and body are required.' });
+    return;
+  }
+
+  const created = {
+    id: `tpl_${Date.now()}`,
+    ownerId: verifiedUser.id,
+    name: cleanName,
+    category: cleanCat,
+    subject: cleanSubject,
+    body: cleanBody,
+    isActive: true,
+    updatedAt: new Date().toISOString(),
+  };
+  EMAIL_TEMPLATES_STORE.unshift(created);
+  res.json({ success: true, template: created, templates: EMAIL_TEMPLATES_STORE });
+});
+
+app.patch('/api/v1/email-templates/:id', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser || verifiedUser.role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden: Only authorized Admins can modify email templates.' });
+    return;
+  }
+
+  const tpl = EMAIL_TEMPLATES_STORE.find((t) => t.id === req.params.id);
+  if (!tpl) {
+    res.status(404).json({ error: 'Template not found.' });
+    return;
+  }
+
+  if (req.body.name !== undefined) tpl.name = sanitizeHeaderText(req.body.name, 120) || tpl.name;
+  if (req.body.subject !== undefined) tpl.subject = sanitizeHeaderText(req.body.subject, 200) || tpl.subject;
+  if (req.body.body !== undefined) tpl.body = String(req.body.body).trim().slice(0, 2000) || tpl.body;
+  if (req.body.isActive !== undefined) tpl.isActive = Boolean(req.body.isActive);
+  tpl.updatedAt = new Date().toISOString();
+
+  res.json({ success: true, template: tpl, templates: EMAIL_TEMPLATES_STORE });
+});
+
+app.delete('/api/v1/email-templates/:id', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser || verifiedUser.role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden: Only authorized Admins can delete email templates.' });
+    return;
+  }
+
+  const idx = EMAIL_TEMPLATES_STORE.findIndex((t) => t.id === req.params.id);
+  if (idx === -1) {
+    res.status(404).json({ error: 'Template not found.' });
+    return;
+  }
+
+  EMAIL_TEMPLATES_STORE.splice(idx, 1);
+  res.json({ success: true, templates: EMAIL_TEMPLATES_STORE });
+});
+
+// Email System Settings (API keys NEVER exposed; mutations strictly Admin only)
+app.get('/api/v1/email-settings', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (
+    !verifiedUser ||
+    (verifiedUser.role !== 'Volunteer' &&
+      verifiedUser.role !== 'Authority' &&
+      verifiedUser.role !== 'Admin')
+  ) {
+    res.status(403).json({ error: 'Forbidden: Staff or Admin authentication required.' });
+    return;
+  }
+
+  const providerInfo = getActiveEmailProvider();
+  res.json({
+    activeProvider: providerInfo.provider,
+    providerConfigured: providerInfo.configured,
+    fromAddress: providerInfo.fromAddress,
+    rateLimitPerMinute: EMAIL_SYSTEM_SETTINGS.rateLimitPerMinute,
+    maxRetries: EMAIL_SYSTEM_SETTINGS.maxRetries,
+    webhookConfigured: Boolean(process.env.EMAIL_WEBHOOK_SECRET && process.env.EMAIL_WEBHOOK_SECRET.trim()),
+    resendWebhookPath: '/api/v1/webhooks/email/resend',
+    sendgridWebhookPath: '/api/v1/webhooks/email/sendgrid',
+  });
+});
+
+app.patch('/api/v1/email-settings', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser || verifiedUser.role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden: Only authorized Admins can manage email settings.' });
+    return;
+  }
+
+  if (req.body.rateLimitPerMinute !== undefined) {
+    const val = Math.round(Number(req.body.rateLimitPerMinute));
+    if (Number.isNaN(val) || val < 1 || val > 500) {
+      res.status(400).json({ error: 'Rate limit must be between 1 and 500 emails per minute.' });
+      return;
+    }
+    EMAIL_SYSTEM_SETTINGS.rateLimitPerMinute = val;
+  }
+
+  if (req.body.maxRetries !== undefined) {
+    const val = Math.round(Number(req.body.maxRetries));
+    if (Number.isNaN(val) || val < 0 || val > 5) {
+      res.status(400).json({ error: 'Max retries must be between 0 and 5.' });
+      return;
+    }
+    EMAIL_SYSTEM_SETTINGS.maxRetries = val;
+  }
+
+  const providerInfo = getActiveEmailProvider();
+  res.json({
+    success: true,
+    settings: {
+      activeProvider: providerInfo.provider,
+      providerConfigured: providerInfo.configured,
+      fromAddress: providerInfo.fromAddress,
+      rateLimitPerMinute: EMAIL_SYSTEM_SETTINGS.rateLimitPerMinute,
+      maxRetries: EMAIL_SYSTEM_SETTINGS.maxRetries,
+      webhookConfigured: Boolean(process.env.EMAIL_WEBHOOK_SECRET && process.env.EMAIL_WEBHOOK_SECRET.trim()),
+      resendWebhookPath: '/api/v1/webhooks/email/resend',
+      sendgridWebhookPath: '/api/v1/webhooks/email/sendgrid',
+    },
+  });
+});
+
+// User Email Notification Preferences (Each authenticated user manages their own preferences)
+app.get('/api/v1/email-preferences', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser) {
+    res.status(401).json({ error: 'Authentication required to view email preferences.' });
+    return;
+  }
+
+  res.json({
+    email: verifiedUser.email,
+    emailVerified: verifiedUser.emailVerified,
+    district: verifiedUser.district,
+    sosAlertsEnabled: verifiedUser.notificationPreferences.sosAlerts,
+    statusUpdatesEnabled: verifiedUser.notificationPreferences.statusUpdates,
+    broadcastsEnabled: verifiedUser.notificationPreferences.emergencyBroadcasts,
+  });
+});
+
+app.patch('/api/v1/email-preferences', (req, res) => {
+  const verifiedUser = getAuthenticatedAccount(req);
+  if (!verifiedUser) {
+    res.status(401).json({ error: 'Authentication required to update email preferences.' });
+    return;
+  }
+
+  const validDistricts = ['sylhet', 'dhaka', 'sunamganj', 'dinajpur'] as const;
+  if (req.body.district !== undefined) {
+    const d = String(req.body.district).toLowerCase();
+    if ((validDistricts as readonly string[]).includes(d)) {
+      verifiedUser.district = d as RegisteredAccount['district'];
+    }
+  }
+  if (req.body.sosAlertsEnabled !== undefined) {
+    verifiedUser.notificationPreferences.sosAlerts = Boolean(req.body.sosAlertsEnabled);
+  }
+  if (req.body.statusUpdatesEnabled !== undefined) {
+    verifiedUser.notificationPreferences.statusUpdates = Boolean(req.body.statusUpdatesEnabled);
+  }
+  if (req.body.broadcastsEnabled !== undefined) {
+    verifiedUser.notificationPreferences.emergencyBroadcasts = Boolean(req.body.broadcastsEnabled);
+  }
+
+  res.json({
+    success: true,
+    preferences: {
+      email: verifiedUser.email,
+      emailVerified: verifiedUser.emailVerified,
+      district: verifiedUser.district,
+      sosAlertsEnabled: verifiedUser.notificationPreferences.sosAlerts,
+      statusUpdatesEnabled: verifiedUser.notificationPreferences.statusUpdates,
+      broadcastsEnabled: verifiedUser.notificationPreferences.emergencyBroadcasts,
+    },
   });
 });
 
