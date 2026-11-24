@@ -33,7 +33,6 @@ import {
   CheckCircle2,
   Lock,
   BellRing,
-  KeyRound,
   Menu,
   X,
   ChevronDown,
@@ -5289,92 +5288,6 @@ export default function App() {
                   Connect Google Account
                 </button>
               )}
-            </div>
-          </div>
-
-          {/* Right: Official Role Credentials Reference Card */}
-          <div className="w-full max-w-md bg-slate-900/95 text-white rounded-2xl p-6 border border-slate-700 space-y-4">
-            <div className="flex items-center gap-2.5 border-b border-slate-700 pb-3">
-              <KeyRound className="w-5 h-5 text-[#55d6be]" />
-              <div>
-                <h2 className="text-base font-bold text-white">
-                  Authorized Role Login Credentials
-                </h2>
-                <p className="text-xs text-slate-300">
-                  Select a role or click Fill Login to test backend-verified role redirection
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2.5 text-xs">
-              {[
-                {
-                  roleLabel: 'User (General Public)',
-                  roleValue: 'Citizen' as StaffAuthRole,
-                  email: 'user@floodguard.gov.bd',
-                  phone: '01711000111',
-                  password: 'FG-User#2026!',
-                  desc: 'Redirects to User Dashboard (Flood Alerts, SOS Help & Shelter Access)',
-                },
-                {
-                  roleLabel: 'Forecast Officer',
-                  roleValue: 'Forecast Officer' as StaffAuthRole,
-                  email: 'forecast@floodguard.gov.bd',
-                  phone: '01711000222',
-                  password: 'FG-Forecast#2026!',
-                  desc: 'Redirects to Forecast Officer Dashboard (Model Upload & Validation)',
-                },
-                {
-                  roleLabel: 'Disaster Management',
-                  roleValue: 'Authority' as StaffAuthRole,
-                  email: 'disaster@floodguard.gov.bd',
-                  phone: '01711000333',
-                  password: 'FG-Disaster#2026!',
-                  desc: 'Redirects to Disaster Management Warning Control Center',
-                },
-                {
-                  roleLabel: 'Volunteer & SOS',
-                  roleValue: 'Volunteer' as StaffAuthRole,
-                  email: 'volunteer@floodguard.gov.bd',
-                  phone: '01711000444',
-                  password: 'FG-Volunteer#2026!',
-                  desc: 'Redirects to Volunteer Dashboard & SOS Rescue Dispatch',
-                },
-                {
-                  roleLabel: 'Admin',
-                  roleValue: 'Admin' as StaffAuthRole,
-                  email: 'admin@floodguard.gov.bd',
-                  phone: '01711000001',
-                  password: 'FG-Admin#2026!',
-                  desc: 'Redirects to Admin Control Panel (User & Role Provisioning)',
-                },
-              ].map((cred) => (
-                <div
-                  key={cred.roleValue}
-                  className="p-3 rounded-xl bg-slate-800/90 border border-slate-700 flex items-center justify-between gap-3"
-                >
-                  <div className="space-y-0.5">
-                    <div className="font-bold text-[#55d6be]">{cred.roleLabel}</div>
-                    <div className="font-mono text-slate-200">Email: {cred.email}</div>
-                    <div className="font-mono text-amber-300">Password: {cred.password}</div>
-                    <div className="text-[11px] text-slate-400">{cred.desc}</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuthMode('login');
-                      setLoginRole(cred.roleValue);
-                      setLoginEmail(cred.email);
-                      setLoginPhone(cred.phone);
-                      setLoginPassword(cred.password);
-                      setAuthErrorMessage(null);
-                    }}
-                    className="px-3 py-1.5 bg-[#159b83] hover:bg-[#087c68] text-white font-semibold rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
-                  >
-                    Fill Login
-                  </button>
-                </div>
-              ))}
             </div>
           </div>
         </main>
